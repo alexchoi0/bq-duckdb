@@ -1,7 +1,7 @@
-(ns bq-duckdb.api
-  "High-level API with macros for bq-duckdb"
-  (:require [bq-duckdb.client :as client]
-            [bq-duckdb.rpc :as rpc]))
+(ns bq-runner.api
+  "High-level API with macros for bq-runner"
+  (:require [bq-runner.client :as client]
+            [bq-runner.rpc :as rpc]))
 
 (def ^:private type-mapping
   {:string "STRING"
@@ -45,7 +45,7 @@
 (defrecord Session [conn session-id])
 
 (defn connect
-  "Connect to bq-duckdb server."
+  "Connect to bq-runner server."
   [url]
   (client/connect url))
 

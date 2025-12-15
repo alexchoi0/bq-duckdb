@@ -1,11 +1,11 @@
-(ns bq-duckdb.client-test
-  "Tests for bq-duckdb Clojure client.
+(ns bq-runner.client-test
+  "Tests for bq-runner Clojure client.
    Server is automatically started on first test run."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
-            [bq-duckdb.api :as bq]
-            [bq-duckdb.rpc :as rpc]
-            [bq-duckdb.client :as client]
-            [bq-duckdb.test-server :as test-server]))
+            [bq-runner.api :as bq]
+            [bq-runner.rpc :as rpc]
+            [bq-runner.client :as client]
+            [bq-runner.test-server :as test-server]))
 
 (def ^:dynamic *test-url* nil)
 
@@ -156,4 +156,4 @@
 
 (comment
   (require '[clojure.test :refer [run-tests]])
-  (run-tests 'bq-duckdb.client-test))
+  (run-tests 'bq-runner.client-test))

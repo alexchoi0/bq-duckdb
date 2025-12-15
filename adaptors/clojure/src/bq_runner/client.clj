@@ -1,5 +1,5 @@
-(ns bq-duckdb.client
-  "WebSocket connection management for bq-duckdb using Java 11+ interop"
+(ns bq-runner.client
+  "WebSocket connection management for bq-runner using Java 11+ interop"
   (:require [clojure.data.json :as json])
   (:import [java.net URI]
            [java.net.http HttpClient WebSocket WebSocket$Listener]
@@ -26,7 +26,7 @@
       (swap! pending dissoc id))))
 
 (defn connect
-  "Connect to bq-duckdb WebSocket server.
+  "Connect to bq-runner WebSocket server.
    Returns a Connection record."
   [url]
   (let [pending (atom {})

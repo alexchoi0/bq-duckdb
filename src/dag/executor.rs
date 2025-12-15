@@ -6,7 +6,7 @@ use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 
 use crate::error::{Error, Result};
-use crate::executor::DuckDbExecutor;
+use crate::executor::QueryExecutor;
 use crate::sql::transform_bq_to_duckdb;
 
 use super::registry::TableRegistry;
@@ -23,7 +23,7 @@ impl DagExecutor {
         &self,
         registry: &TableRegistry,
         targets: &[String],
-        executor: Arc<DuckDbExecutor>,
+        executor: Arc<dyn QueryExecutor>,
         schema_name: &str,
     ) -> Result<DagRunResult> {
         let tables_to_run = self.get_required_tables(registry, targets)?;
@@ -123,7 +123,7 @@ impl DagExecutor {
         &self,
         name: String,
         def: TableDef,
-        executor: Arc<DuckDbExecutor>,
+        executor: Arc<dyn QueryExecutor>,
         schema_name: String,
         tx: mpsc::UnboundedSender<std::result::Result<String, Error>>,
         cancel_token: CancellationToken,
@@ -134,7 +134,7 @@ impl DagExecutor {
             }
 
             let result = tokio::task::spawn_blocking(move || {
-                execute_table(&executor, &schema_name, &name, &def)
+                execute_table(&*executor, &schema_name, &name, &def)
             })
             .await
             .map_err(|e| Error::Internal(format!("Task join error: {e}")))
@@ -247,7 +247,7 @@ impl DagExecutor {
 }
 
 fn execute_table(
-    executor: &DuckDbExecutor,
+    executor: &dyn QueryExecutor,
     schema_name: &str,
     name: &str,
     def: &TableDef,
@@ -264,7 +264,7 @@ fn execute_table(
 }
 
 fn create_source_table(
-    executor: &DuckDbExecutor,
+    executor: &dyn QueryExecutor,
     schema_name: &str,
     name: &str,
     schema: &[super::types::ColumnDef],
@@ -294,7 +294,7 @@ fn create_source_table(
 }
 
 fn create_view(
-    executor: &DuckDbExecutor,
+    executor: &dyn QueryExecutor,
     schema_name: &str,
     name: &str,
     sql: &str,
@@ -341,9 +341,10 @@ impl Default for DagExecutor {
 mod tests {
     use super::*;
     use crate::dag::types::ColumnDef;
+    use crate::executor::DuckDbExecutor;
     use serde_json::json;
 
-    fn create_test_executor() -> Arc<DuckDbExecutor> {
+    fn create_test_executor() -> Arc<dyn QueryExecutor> {
         Arc::new(DuckDbExecutor::new().unwrap())
     }
 

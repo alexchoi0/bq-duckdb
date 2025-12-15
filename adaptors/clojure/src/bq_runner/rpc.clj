@@ -1,6 +1,6 @@
-(ns bq-duckdb.rpc
-  "Low-level RPC methods for bq-duckdb"
-  (:require [bq-duckdb.client :as client]))
+(ns bq-runner.rpc
+  "Low-level RPC methods for bq-runner"
+  (:require [bq-runner.client :as client]))
 
 (defn ping
   "Health check. Returns {:message \"pong\"}."

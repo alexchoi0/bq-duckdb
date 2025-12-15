@@ -1,19 +1,19 @@
-# bq-duckdb Clojure Client
+# bq-runner Clojure Client
 
-Clojure client for bq-duckdb, a BigQuery emulator powered by DuckDB.
+Clojure client for bq-runner, a BigQuery runner with mock, interactive, and batch modes.
 
 ## Installation
 
 Add to `deps.edn`:
 
 ```clojure
-{:deps {bq-duckdb/bq-duckdb {:local/root "/path/to/bq-duckdb/adaptors/clojure"}}}
+{:deps {bq-runner/bq-runner {:local/root "/path/to/bq-runner/adaptors/clojure"}}}
 ```
 
 ## Quick Start
 
 ```clojure
-(require '[bq-duckdb.api :as bq])
+(require '[bq-runner.api :as bq])
 
 ;; Connect and create session
 (bq/with-connection [conn "ws://localhost:3000/ws"]
@@ -141,7 +141,7 @@ Register a DAG of tables and execute with parallel processing:
 
 ```bash
 # Start server first
-cd ../.. && cargo build --release && ./target/release/bq-duckdb &
+cd ../.. && cargo build --release && ./target/release/bq-runner &
 
 # Run tests
 clojure -M:test

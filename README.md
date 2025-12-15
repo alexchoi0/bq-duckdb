@@ -1,13 +1,14 @@
-# bq-duckdb
+# bq-runner
 
-A BigQuery emulator powered by DuckDB. Run BigQuery-compatible SQL locally for development and testing.
+A BigQuery runner with three execution modes: mock (DuckDB emulation), interactive (real BigQuery with high priority), and batch (real BigQuery with queued execution).
 
 ## Features
 
-- **BigQuery SQL compatibility**: Transforms BigQuery SQL syntax to DuckDB
+- **BigQuery SQL compatibility**: Transforms BigQuery SQL syntax to DuckDB (mock mode)
 - **Session isolation**: Each session gets its own schema, fully isolated
 - **DAG execution**: Register tables as a DAG and execute with parallel processing
 - **WebSocket RPC**: JSON-RPC 2.0 over WebSocket
+- **Multiple execution modes**: Mock, Interactive, and Batch
 
 ## Quick Start
 
@@ -15,11 +16,33 @@ A BigQuery emulator powered by DuckDB. Run BigQuery-compatible SQL locally for d
 # Build
 cargo build --release
 
-# Run server
-./target/release/bq-duckdb
+# Run in mock mode (default) - uses DuckDB
+./target/release/bq-runner
+
+# Run in interactive mode - real BigQuery, high priority
+./target/release/bq-runner --mode interactive --project my-gcp-project
+
+# Run in batch mode - real BigQuery, queued execution
+./target/release/bq-runner --mode batch --project my-gcp-project
 ```
 
 Server starts on `ws://localhost:3000/ws`
+
+## Execution Modes
+
+| Mode | Backend | Priority | Use Case |
+|------|---------|----------|----------|
+| `mock` | DuckDB | N/A | Local development, testing |
+| `interactive` | BigQuery | High | Production queries needing immediate results |
+| `batch` | BigQuery | Low | Large analytics jobs, cost optimization |
+
+### BigQuery Authentication
+
+For `interactive` and `batch` modes, set up authentication:
+
+```bash
+export GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account-key.json
+```
 
 ## RPC Methods
 
@@ -38,7 +61,7 @@ Server starts on `ws://localhost:3000/ws`
 
 ## Supported BigQuery Functions
 
-Automatically transformed to DuckDB equivalents:
+Automatically transformed to DuckDB equivalents (mock mode):
 
 - `SAFE_DIVIDE` → division with NULLIF
 - `TIMESTAMP_DIFF/ADD/SUB` → DATE_DIFF with interval
@@ -63,7 +86,7 @@ Automatically transformed to DuckDB equivalents:
 cargo test
 
 # Run with logging
-RUST_LOG=info ./target/release/bq-duckdb
+RUST_LOG=info ./target/release/bq-runner
 ```
 
 ## License

@@ -1,5 +1,5 @@
-(ns bq-duckdb.test-server
-  "Singleton test server that starts bq-duckdb on first access and cleans up on JVM shutdown."
+(ns bq-runner.test-server
+  "Singleton test server that starts bq-runner on first access and cleans up on JVM shutdown."
   (:require [clojure.java.io :as io])
   (:import [java.lang ProcessBuilder ProcessBuilder$Redirect]
            [java.net Socket]
@@ -13,7 +13,7 @@
       (-> (io/file cwd) .getParentFile .getParentFile .getAbsolutePath))))
 
 (def ^:private binary-path
-  (str project-root "/target/release/bq-duckdb"))
+  (str project-root "/target/release/bq-runner"))
 
 (defn- port-available? [port]
   (try
@@ -37,7 +37,7 @@
             (recur))))))
 
 (defn- build-server []
-  (println "Building bq-duckdb server...")
+  (println "Building bq-runner server...")
   (let [pb (ProcessBuilder. ["cargo" "build" "--release"])
         _ (.directory pb (File. project-root))
         _ (.redirectErrorStream pb true)
@@ -52,7 +52,7 @@
 (defn- start-server-process []
   (when-not (.exists (File. binary-path))
     (build-server))
-  (println "Starting bq-duckdb server...")
+  (println "Starting bq-runner server...")
   (let [pb (ProcessBuilder. [binary-path])
         _ (.directory pb (File. project-root))
         _ (.redirectOutput pb ProcessBuilder$Redirect/INHERIT)

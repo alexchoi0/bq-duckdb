@@ -14,7 +14,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "=== BQ-DuckDB E2E Tests ==="
+echo "=== bq-runner E2E Tests ==="
 echo
 
 # Build server
@@ -25,7 +25,7 @@ echo "  Build successful"
 
 # Start server
 echo "Starting server..."
-./target/release/bq-duckdb &
+./target/release/bq-runner &
 SERVER_PID=$!
 
 # Wait for server to be ready

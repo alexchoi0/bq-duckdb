@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde_json::Value;
 
 use crate::error::{Error, Result};
-use crate::executor::DuckDbExecutor;
+use crate::executor::QueryExecutor;
 
 use super::parser::extract_dependencies;
 use super::types::{ColumnDef, TableDef, TableKind};
@@ -88,7 +88,7 @@ impl TableRegistry {
 
     pub fn validate_dependencies(
         &self,
-        executor: &DuckDbExecutor,
+        executor: &dyn QueryExecutor,
         schema_name: &str,
     ) -> Result<()> {
         for def in self.tables.values() {

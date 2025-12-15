@@ -6,11 +6,11 @@ use uuid::Uuid;
 
 use crate::dag::TableRegistry;
 use crate::error::{Error, Result};
-use crate::executor::DuckDbExecutor;
+use crate::executor::QueryExecutor;
 
 pub struct SessionManager {
     sessions: RwLock<HashMap<Uuid, SessionMeta>>,
-    executor: Arc<DuckDbExecutor>,
+    executor: Arc<dyn QueryExecutor>,
 }
 
 struct SessionMeta {
@@ -19,7 +19,7 @@ struct SessionMeta {
 }
 
 impl SessionManager {
-    pub fn new(executor: Arc<DuckDbExecutor>) -> Self {
+    pub fn new(executor: Arc<dyn QueryExecutor>) -> Self {
         Self {
             sessions: RwLock::new(HashMap::new()),
             executor,
@@ -62,11 +62,11 @@ impl SessionManager {
             .ok_or(Error::SessionNotFound(session_id))
     }
 
-    pub fn executor(&self) -> &DuckDbExecutor {
-        &self.executor
+    pub fn executor(&self) -> &dyn QueryExecutor {
+        &*self.executor
     }
 
-    pub fn arc_executor(&self) -> Arc<DuckDbExecutor> {
+    pub fn arc_executor(&self) -> Arc<dyn QueryExecutor> {
         Arc::clone(&self.executor)
     }
 
@@ -96,9 +96,10 @@ impl SessionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::executor::DuckDbExecutor;
 
     fn create_manager() -> SessionManager {
-        let executor = Arc::new(DuckDbExecutor::new().unwrap());
+        let executor: Arc<dyn QueryExecutor> = Arc::new(DuckDbExecutor::new().unwrap());
         SessionManager::new(executor)
     }
 

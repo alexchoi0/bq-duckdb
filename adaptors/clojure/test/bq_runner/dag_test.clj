@@ -1,9 +1,9 @@
-(ns bq-duckdb.dag-test
+(ns bq-runner.dag-test
   "Tests for DAG executor functionality."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
-            [bq-duckdb.api :as bq]
-            [bq-duckdb.rpc :as rpc]
-            [bq-duckdb.test-server :as test-server]))
+            [bq-runner.api :as bq]
+            [bq-runner.rpc :as rpc]
+            [bq-runner.test-server :as test-server]))
 
 (def ^:dynamic *test-url* nil)
 
@@ -282,4 +282,4 @@
 
 (comment
   (require '[clojure.test :refer [run-tests]])
-  (run-tests 'bq-duckdb.dag-test))
+  (run-tests 'bq-runner.dag-test))

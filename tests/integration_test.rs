@@ -3,12 +3,12 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 
-use bq_duckdb::executor::DuckDbExecutor;
-use bq_duckdb::rpc::RpcMethods;
-use bq_duckdb::session::SessionManager;
+use bq_runner::executor::{DuckDbExecutor, QueryExecutor};
+use bq_runner::rpc::RpcMethods;
+use bq_runner::session::SessionManager;
 
 fn create_rpc_methods() -> Arc<RpcMethods> {
-    let executor = Arc::new(DuckDbExecutor::new().unwrap());
+    let executor: Arc<dyn QueryExecutor> = Arc::new(DuckDbExecutor::new().unwrap());
     let session_manager = Arc::new(SessionManager::new(executor));
     Arc::new(RpcMethods::new(session_manager))
 }

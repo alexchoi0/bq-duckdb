@@ -1,8 +1,8 @@
-(ns bq-duckdb.olap-test
+(ns bq-runner.olap-test
   "OLAP workload tests for BigQuery compatibility."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
-            [bq-duckdb.api :as bq]
-            [bq-duckdb.test-server :as test-server]))
+            [bq-runner.api :as bq]
+            [bq-runner.test-server :as test-server]))
 
 (def ^:dynamic *test-url* nil)
 
