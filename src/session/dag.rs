@@ -110,7 +110,10 @@ impl Dag {
                 let drop_sql = format!("DROP TABLE IF EXISTS {}", table.name);
                 let _ = executor.execute_statement(&drop_sql);
 
-                let query_result = executor.execute_query(sql)?;
+                let query_result = executor.execute_query(sql).map_err(|e| {
+                    let dep_data = self.get_dependency_data(executor, &table.dependencies);
+                    Error::Executor(format!("{}\n\nDependency data:\n{}", e, dep_data))
+                })?;
 
                 if !query_result.columns.is_empty() {
                     let column_types: Vec<String> = if !query_result.rows.is_empty() {
@@ -299,6 +302,38 @@ impl Dag {
             let _ = executor.execute_statement(&drop_sql);
         }
         self.tables.clear();
+    }
+
+    fn get_dependency_data(&self, executor: &Executor, dependencies: &[String]) -> String {
+        let mut result = Vec::new();
+
+        for dep_name in dependencies {
+            let query = format!("SELECT * FROM {}", dep_name);
+            match executor.execute_query(&query) {
+                Ok(query_result) => {
+                    let mut table_str = format!("{}:\n", dep_name);
+                    if query_result.rows.is_empty() {
+                        table_str.push_str("  (empty)\n");
+                    } else {
+                        table_str.push_str(&format!("  columns: {}\n", query_result.columns.join(", ")));
+                        for row in &query_result.rows {
+                            let row_vals: Vec<String> = row.iter().map(|v| v.to_string()).collect();
+                            table_str.push_str(&format!("  - {}\n", row_vals.join(", ")));
+                        }
+                    }
+                    result.push(table_str);
+                }
+                Err(e) => {
+                    result.push(format!("{}: <failed to query: {}>\n", dep_name, e));
+                }
+            }
+        }
+
+        if result.is_empty() {
+            "(no dependencies)".to_string()
+        } else {
+            result.join("\n")
+        }
     }
 }
 

@@ -22,7 +22,7 @@ impl YachtSqlExecutor {
 
         let result = executor
             .execute_sql(sql)
-            .map_err(|e| Error::Executor(e.to_string()))?;
+            .map_err(|e| Error::Executor(format!("{}\n\nSQL: {}", e, sql)))?;
 
         table_to_query_result(&result)
     }
@@ -32,7 +32,7 @@ impl YachtSqlExecutor {
 
         let result = executor
             .execute_sql(sql)
-            .map_err(|e| Error::Executor(e.to_string()))?;
+            .map_err(|e| Error::Executor(format!("{}\n\nSQL: {}", e, sql)))?;
 
         Ok(result.row_count() as u64)
     }
