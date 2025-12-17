@@ -232,3 +232,20 @@ pub struct ClearDagParams {
 pub struct ClearDagResult {
     pub success: bool,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct LoadParquetParams {
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    #[serde(rename = "tableName")]
+    pub table_name: String,
+    pub path: String,
+    pub schema: Vec<ColumnDef>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LoadParquetResult {
+    pub success: bool,
+    #[serde(rename = "rowCount")]
+    pub row_count: u64,
+}

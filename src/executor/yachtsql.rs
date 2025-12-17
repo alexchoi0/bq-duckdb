@@ -1,4 +1,9 @@
+use std::fs::File;
+
+use arrow::array::Array;
+use arrow::datatypes::DataType;
 use parking_lot::Mutex;
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use serde_json::{json, Value as JsonValue};
 use yachtsql::{QueryExecutor as YachtExecutor, Value as YachtValue, Table};
 
@@ -35,6 +40,81 @@ impl YachtSqlExecutor {
             .map_err(|e| Error::Executor(format!("{}\n\nSQL: {}", e, sql)))?;
 
         Ok(result.row_count() as u64)
+    }
+
+    pub fn load_parquet(
+        &self,
+        table_name: &str,
+        path: &str,
+        schema: &[crate::rpc::types::ColumnDef],
+    ) -> Result<u64> {
+        let file = File::open(path)
+            .map_err(|e| Error::Executor(format!("Failed to open parquet file: {}", e)))?;
+
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file)
+            .map_err(|e| Error::Executor(format!("Failed to read parquet: {}", e)))?;
+
+        let reader = builder
+            .build()
+            .map_err(|e| Error::Executor(format!("Failed to build parquet reader: {}", e)))?;
+
+        let columns: Vec<String> = schema
+            .iter()
+            .map(|col| format!("{} {}", col.name, col.column_type))
+            .collect();
+
+        let create_sql = format!(
+            "CREATE OR REPLACE TABLE {} ({})",
+            table_name,
+            columns.join(", ")
+        );
+
+        let mut executor = self.executor.lock();
+        executor
+            .execute_sql(&create_sql)
+            .map_err(|e| Error::Executor(format!("{}\n\nSQL: {}", e, create_sql)))?;
+
+        let mut total_rows = 0u64;
+
+        for batch_result in reader {
+            let batch = batch_result
+                .map_err(|e| Error::Executor(format!("Failed to read batch: {}", e)))?;
+
+            if batch.num_rows() == 0 {
+                continue;
+            }
+
+            let mut all_values: Vec<Vec<String>> = Vec::new();
+            for row_idx in 0..batch.num_rows() {
+                let mut row_values = Vec::new();
+                for col_idx in 0..batch.num_columns() {
+                    let col = batch.column(col_idx);
+                    let bq_type = &schema[col_idx].column_type;
+                    let value = arrow_value_to_sql(col.as_ref(), row_idx, bq_type);
+                    row_values.push(value);
+                }
+                all_values.push(row_values);
+            }
+
+            let values_str: Vec<String> = all_values
+                .iter()
+                .map(|row| format!("({})", row.join(", ")))
+                .collect();
+
+            let insert_sql = format!(
+                "INSERT INTO {} VALUES {}",
+                table_name,
+                values_str.join(", ")
+            );
+
+            executor
+                .execute_sql(&insert_sql)
+                .map_err(|e| Error::Executor(format!("{}\n\nSQL: {}", e, insert_sql)))?;
+
+            total_rows += batch.num_rows() as u64;
+        }
+
+        Ok(total_rows)
     }
 }
 
@@ -147,4 +227,105 @@ fn base64_encode(data: &[u8]) -> String {
         }
     }
     result
+}
+
+fn arrow_value_to_sql(array: &dyn Array, row: usize, bq_type: &str) -> String {
+    use arrow::array::*;
+
+    if array.is_null(row) {
+        return "NULL".to_string();
+    }
+
+    match array.data_type() {
+        DataType::Boolean => {
+            let arr = array.as_any().downcast_ref::<BooleanArray>().unwrap();
+            arr.value(row).to_string()
+        }
+        DataType::Int8 => {
+            let arr = array.as_any().downcast_ref::<Int8Array>().unwrap();
+            arr.value(row).to_string()
+        }
+        DataType::Int16 => {
+            let arr = array.as_any().downcast_ref::<Int16Array>().unwrap();
+            arr.value(row).to_string()
+        }
+        DataType::Int32 => {
+            let arr = array.as_any().downcast_ref::<Int32Array>().unwrap();
+            arr.value(row).to_string()
+        }
+        DataType::Int64 => {
+            let arr = array.as_any().downcast_ref::<Int64Array>().unwrap();
+            let val = arr.value(row);
+            match bq_type.to_uppercase().as_str() {
+                "DATE" => format!("DATE_FROM_UNIX_DATE({})", val),
+                "TIMESTAMP" => format!("TIMESTAMP_MICROS({})", val),
+                _ => val.to_string(),
+            }
+        }
+        DataType::UInt8 => {
+            let arr = array.as_any().downcast_ref::<UInt8Array>().unwrap();
+            arr.value(row).to_string()
+        }
+        DataType::UInt16 => {
+            let arr = array.as_any().downcast_ref::<UInt16Array>().unwrap();
+            arr.value(row).to_string()
+        }
+        DataType::UInt32 => {
+            let arr = array.as_any().downcast_ref::<UInt32Array>().unwrap();
+            arr.value(row).to_string()
+        }
+        DataType::UInt64 => {
+            let arr = array.as_any().downcast_ref::<UInt64Array>().unwrap();
+            arr.value(row).to_string()
+        }
+        DataType::Float32 => {
+            let arr = array.as_any().downcast_ref::<Float32Array>().unwrap();
+            arr.value(row).to_string()
+        }
+        DataType::Float64 => {
+            let arr = array.as_any().downcast_ref::<Float64Array>().unwrap();
+            arr.value(row).to_string()
+        }
+        DataType::Utf8 => {
+            let arr = array.as_any().downcast_ref::<StringArray>().unwrap();
+            format!("'{}'", arr.value(row).replace('\'', "''"))
+        }
+        DataType::LargeUtf8 => {
+            let arr = array.as_any().downcast_ref::<LargeStringArray>().unwrap();
+            format!("'{}'", arr.value(row).replace('\'', "''"))
+        }
+        DataType::Date32 => {
+            let arr = array.as_any().downcast_ref::<Date32Array>().unwrap();
+            let days = arr.value(row);
+            format!("DATE_FROM_UNIX_DATE({})", days)
+        }
+        DataType::Date64 => {
+            let arr = array.as_any().downcast_ref::<Date64Array>().unwrap();
+            let ms = arr.value(row);
+            let days = ms / (24 * 60 * 60 * 1000);
+            format!("DATE_FROM_UNIX_DATE({})", days)
+        }
+        DataType::Timestamp(unit, _) => {
+            let micros = match unit {
+                arrow::datatypes::TimeUnit::Second => {
+                    let arr = array.as_any().downcast_ref::<TimestampSecondArray>().unwrap();
+                    arr.value(row) * 1_000_000
+                }
+                arrow::datatypes::TimeUnit::Millisecond => {
+                    let arr = array.as_any().downcast_ref::<TimestampMillisecondArray>().unwrap();
+                    arr.value(row) * 1_000
+                }
+                arrow::datatypes::TimeUnit::Microsecond => {
+                    let arr = array.as_any().downcast_ref::<TimestampMicrosecondArray>().unwrap();
+                    arr.value(row)
+                }
+                arrow::datatypes::TimeUnit::Nanosecond => {
+                    let arr = array.as_any().downcast_ref::<TimestampNanosecondArray>().unwrap();
+                    arr.value(row) / 1_000
+                }
+            };
+            format!("TIMESTAMP_MICROS({})", micros)
+        }
+        _ => "NULL".to_string(),
+    }
 }

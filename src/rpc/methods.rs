@@ -9,8 +9,8 @@ use crate::session::SessionManager;
 use super::types::{
     ClearDagParams, ClearDagResult, CreateSessionResult, CreateTableParams, CreateTableResult,
     DestroySessionParams, DestroySessionResult, GetDagParams, GetDagResult, InsertParams,
-    InsertResult, PingResult, QueryParams, RegisterDagParams, RegisterDagResult, RunDagParams,
-    RunDagResult,
+    InsertResult, LoadParquetParams, LoadParquetResult, PingResult, QueryParams,
+    RegisterDagParams, RegisterDagResult, RunDagParams, RunDagResult,
 };
 
 pub struct RpcMethods {
@@ -34,6 +34,7 @@ impl RpcMethods {
             "bq.runDag" => self.run_dag(params).await,
             "bq.getDag" => self.get_dag(params).await,
             "bq.clearDag" => self.clear_dag(params).await,
+            "bq.loadParquet" => self.load_parquet(params).await,
             _ => Err(Error::InvalidRequest(format!("Unknown method: {}", method))),
         }
     }
@@ -216,6 +217,27 @@ impl RpcMethods {
         .map_err(|e| Error::Internal(format!("Task join error: {e}")))??;
 
         Ok(json!(ClearDagResult { success: true }))
+    }
+
+    async fn load_parquet(&self, params: Value) -> Result<Value> {
+        let p: LoadParquetParams = serde_json::from_value(params)?;
+        let session_id = parse_uuid(&p.session_id)?;
+        let table_name = p.table_name;
+        let path = p.path;
+        let schema = p.schema;
+
+        let session_manager = Arc::clone(&self.session_manager);
+
+        let row_count = tokio::task::spawn_blocking(move || {
+            session_manager.load_parquet(session_id, &table_name, &path, &schema)
+        })
+        .await
+        .map_err(|e| Error::Internal(format!("Task join error: {e}")))??;
+
+        Ok(json!(LoadParquetResult {
+            success: true,
+            row_count,
+        }))
     }
 }
 

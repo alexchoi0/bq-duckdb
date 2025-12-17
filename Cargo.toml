@@ -21,3 +21,8 @@ clap = { version = "4", features = ["derive"] }
 futures = "0.3"
 google-cloud-bigquery = "0.13"
 google-cloud-auth = "0.17"
+parquet = "54"
+arrow = "54"
+
+[dev-dependencies]
+tempfile = "3"
