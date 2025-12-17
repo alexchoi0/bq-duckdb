@@ -38,15 +38,45 @@ impl From<Backend> for ExecutorMode {
     }
 }
 
+#[derive(Debug, Clone)]
+enum Transport {
+    Stdio,
+    WebSocket { port: u16 },
+}
+
+fn parse_transport(s: &str) -> Result<Transport, String> {
+    if s == "stdio" {
+        return Ok(Transport::Stdio);
+    }
+
+    if let Some(rest) = s.strip_prefix("ws://") {
+        let port_str = rest
+            .strip_prefix("localhost:")
+            .or_else(|| rest.strip_prefix("0.0.0.0:"))
+            .or_else(|| rest.strip_prefix("127.0.0.1:"))
+            .ok_or_else(|| format!("Invalid ws URL: {}. Expected ws://localhost:<port>", s))?;
+
+        let port_str = port_str.split('/').next().unwrap_or(port_str);
+
+        let port: u16 = port_str
+            .parse()
+            .map_err(|_| format!("Invalid port in URL: {}", port_str))?;
+
+        return Ok(Transport::WebSocket { port });
+    }
+
+    Err(format!(
+        "Invalid transport: {}. Use 'stdio' or 'ws://localhost:<port>'",
+        s
+    ))
+}
+
 #[derive(Parser)]
 #[command(name = "bq-runner")]
-#[command(about = "BigQuery runner with mock and real BigQuery modes")]
+#[command(about = "BigQuery runner with mock and real BigQuery backends")]
 struct Args {
-    #[arg(long, default_value = "3000")]
-    port: u16,
-
-    #[arg(long, help = "Use stdio transport (read JSON-RPC from stdin, write to stdout)")]
-    stdio: bool,
+    #[arg(long, value_parser = parse_transport, default_value = "ws://localhost:3000", help = "Transport: stdio or ws://localhost:<port>")]
+    transport: Transport,
 
     #[arg(long, value_enum, default_value = "mock", help = "Execution backend: mock (YachtSQL) or bigquery (real BigQuery)")]
     backend: Backend,
@@ -65,23 +95,24 @@ async fn main() -> anyhow::Result<()> {
     let session_manager = Arc::new(SessionManager::with_mode(executor_mode));
     let methods = Arc::new(RpcMethods::new(session_manager));
 
-    if args.stdio {
-        run_stdio_server(methods).await
-    } else {
-        tracing_subscriber::fmt()
-            .with_env_filter(
-                EnvFilter::builder()
-                    .with_default_directive(Level::INFO.into())
-                    .from_env_lossy(),
-            )
-            .init();
+    match args.transport {
+        Transport::Stdio => run_stdio_server(methods).await,
+        Transport::WebSocket { port } => {
+            tracing_subscriber::fmt()
+                .with_env_filter(
+                    EnvFilter::builder()
+                        .with_default_directive(Level::INFO.into())
+                        .from_env_lossy(),
+                )
+                .init();
 
-        match executor_mode {
-            ExecutorMode::Mock => info!("Starting with mock backend (YachtSQL)"),
-            ExecutorMode::BigQuery => info!("Starting with BigQuery backend"),
+            match executor_mode {
+                ExecutorMode::Mock => info!("Starting with mock backend (YachtSQL)"),
+                ExecutorMode::BigQuery => info!("Starting with BigQuery backend"),
+            }
+
+            run_http_server(port, methods).await
         }
-
-        run_http_server(args.port, methods).await
     }
 }
 
@@ -130,7 +161,7 @@ async fn run_http_server(port: u16, methods: Arc<RpcMethods>) -> anyhow::Result<
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    info!("Starting bq-runner on {}", addr);
+    info!("Listening on ws://{}/ws", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;

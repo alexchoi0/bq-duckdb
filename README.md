@@ -16,17 +16,18 @@ A BigQuery runner with two execution backends: mock (BigQuery emulation via Yach
 # Build
 cargo build --release
 
-# Run with mock backend (default) - uses YachtSQL
+# Run with mock backend (default) on port 3000
 ./target/release/bq-runner
 
-# Run with bigquery backend - real BigQuery
+# Run on a different port
+./target/release/bq-runner --transport ws://localhost:8080
+
+# Run with bigquery backend
 ./target/release/bq-runner --backend bigquery
 
 # Run with stdio transport (for process-based IPC)
-./target/release/bq-runner --stdio
+./target/release/bq-runner --transport stdio
 ```
-
-Server starts on `ws://localhost:3000/ws` (or reads from stdin in stdio mode)
 
 ## Backends
 
@@ -49,9 +50,8 @@ The project ID is automatically read from the credentials file.
 
 ```
 Options:
-      --port <PORT>        Server port [default: 3000]
-      --stdio              Use stdio transport (read JSON-RPC from stdin, write to stdout)
-      --backend <BACKEND>  Execution backend: mock (YachtSQL) or bigquery (real BigQuery) [default: mock]
+      --transport <TRANSPORT>  Transport: stdio or ws://localhost:<port> [default: ws://localhost:3000]
+      --backend <BACKEND>      Execution backend: mock (YachtSQL) or bigquery (real BigQuery) [default: mock]
 ```
 
 ## RPC Methods
