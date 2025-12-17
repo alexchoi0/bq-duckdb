@@ -1,14 +1,14 @@
 # bq-runner
 
-A BigQuery runner with two execution modes: mock (BigQuery emulation via YachtSQL) and bigquery (real BigQuery).
+A BigQuery runner with two execution backends: mock (BigQuery emulation via YachtSQL) and bigquery (real BigQuery).
 
 ## Features
 
 - **Native BigQuery SQL support**: YachtSQL provides native BigQuery SQL dialect support
 - **Session isolation**: Each session gets its own database, fully isolated
 - **DAG execution**: Register tables as a DAG and execute in dependency order
-- **WebSocket & stdio RPC**: JSON-RPC 2.0 over WebSocket or stdio
-- **Multiple execution modes**: Mock (local) and BigQuery (real)
+- **WebSocket & stdio transports**: JSON-RPC 2.0 over WebSocket or stdio
+- **Multiple backends**: Mock (local) and BigQuery (real)
 
 ## Quick Start
 
@@ -16,28 +16,28 @@ A BigQuery runner with two execution modes: mock (BigQuery emulation via YachtSQ
 # Build
 cargo build --release
 
-# Run in mock mode (default) - uses YachtSQL
+# Run with mock backend (default) - uses YachtSQL
 ./target/release/bq-runner
 
-# Run in bigquery mode - real BigQuery
-./target/release/bq-runner --mode bigquery
+# Run with bigquery backend - real BigQuery
+./target/release/bq-runner --backend bigquery
 
-# Run in stdio mode (for process-based IPC)
+# Run with stdio transport (for process-based IPC)
 ./target/release/bq-runner --stdio
 ```
 
 Server starts on `ws://localhost:3000/ws` (or reads from stdin in stdio mode)
 
-## Execution Modes
+## Backends
 
-| Mode | Backend | Use Case |
-|------|---------|----------|
+| Backend | Engine | Use Case |
+|---------|--------|----------|
 | `mock` | YachtSQL | Local development, testing |
 | `bigquery` | BigQuery | Production queries against real BigQuery |
 
 ### BigQuery Authentication
 
-For `bigquery` mode, set up authentication:
+For `bigquery` backend, set up authentication:
 
 ```bash
 export GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account-key.json
@@ -49,9 +49,9 @@ The project ID is automatically read from the credentials file.
 
 ```
 Options:
-      --port <PORT>    Server port [default: 3000]
-      --stdio          Run in stdio mode (read JSON-RPC from stdin, write to stdout)
-      --mode <MODE>    Execution mode: mock (YachtSQL) or bigquery (real BigQuery) [default: mock]
+      --port <PORT>        Server port [default: 3000]
+      --stdio              Use stdio transport (read JSON-RPC from stdin, write to stdout)
+      --backend <BACKEND>  Execution backend: mock (YachtSQL) or bigquery (real BigQuery) [default: mock]
 ```
 
 ## RPC Methods

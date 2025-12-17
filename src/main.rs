@@ -23,17 +23,17 @@ use rpc::{handle_websocket, process_message, RpcMethods};
 use session::SessionManager;
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
-enum Mode {
+enum Backend {
     #[default]
     Mock,
     Bigquery,
 }
 
-impl From<Mode> for ExecutorMode {
-    fn from(mode: Mode) -> Self {
-        match mode {
-            Mode::Mock => ExecutorMode::Mock,
-            Mode::Bigquery => ExecutorMode::BigQuery,
+impl From<Backend> for ExecutorMode {
+    fn from(backend: Backend) -> Self {
+        match backend {
+            Backend::Mock => ExecutorMode::Mock,
+            Backend::Bigquery => ExecutorMode::BigQuery,
         }
     }
 }
@@ -45,11 +45,11 @@ struct Args {
     #[arg(long, default_value = "3000")]
     port: u16,
 
-    #[arg(long, help = "Run in stdio mode (read JSON-RPC from stdin, write to stdout)")]
+    #[arg(long, help = "Use stdio transport (read JSON-RPC from stdin, write to stdout)")]
     stdio: bool,
 
-    #[arg(long, value_enum, default_value = "mock", help = "Execution mode: mock (YachtSQL) or bigquery (real BigQuery)")]
-    mode: Mode,
+    #[arg(long, value_enum, default_value = "mock", help = "Execution backend: mock (YachtSQL) or bigquery (real BigQuery)")]
+    backend: Backend,
 }
 
 #[derive(Clone)]
@@ -61,7 +61,7 @@ struct AppState {
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    let executor_mode: ExecutorMode = args.mode.into();
+    let executor_mode: ExecutorMode = args.backend.into();
     let session_manager = Arc::new(SessionManager::with_mode(executor_mode));
     let methods = Arc::new(RpcMethods::new(session_manager));
 
@@ -77,8 +77,8 @@ async fn main() -> anyhow::Result<()> {
             .init();
 
         match executor_mode {
-            ExecutorMode::Mock => info!("Starting in mock mode (YachtSQL)"),
-            ExecutorMode::BigQuery => info!("Starting in BigQuery mode"),
+            ExecutorMode::Mock => info!("Starting with mock backend (YachtSQL)"),
+            ExecutorMode::BigQuery => info!("Starting with BigQuery backend"),
         }
 
         run_http_server(args.port, methods).await
