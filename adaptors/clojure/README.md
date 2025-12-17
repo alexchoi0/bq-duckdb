@@ -16,7 +16,7 @@ Add to `deps.edn`:
 (require '[bq-runner.api :as bq])
 
 ;; Connect and create session
-(bq/with-connection [conn "ws://localhost:3000/ws"]
+(bq/with-connection [conn "ws://localhost:3000"]
   (bq/with-session [s conn]
 
     ;; Simple query
@@ -36,7 +36,7 @@ Add to `deps.edn`:
 Register a DAG of tables and execute with parallel processing:
 
 ```clojure
-(bq/with-connection [conn "ws://localhost:3000/ws"]
+(bq/with-connection [conn "ws://localhost:3000"]
   (bq/with-session [s conn]
 
     ;; Register DAG with source and derived tables

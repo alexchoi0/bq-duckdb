@@ -156,12 +156,12 @@ async fn run_http_server(port: u16, methods: Arc<RpcMethods>) -> anyhow::Result<
     let state = AppState { methods };
 
     let app = Router::new()
-        .route("/ws", get(ws_handler))
+        .route("/", get(ws_handler))
         .route("/health", get(health_handler))
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    info!("Listening on ws://{}/ws", addr);
+    info!("Listening on ws://{}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
