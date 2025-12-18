@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use parking_lot::RwLock;
 use uuid::Uuid;
@@ -15,7 +16,7 @@ pub struct SessionManager {
 }
 
 struct Session {
-    executor: Executor,
+    executor: Arc<Executor>,
     dag: Dag,
 }
 
@@ -42,7 +43,10 @@ impl SessionManager {
         };
         let dag = Dag::new();
 
-        let session = Session { executor, dag };
+        let session = Session {
+            executor: Arc::new(executor),
+            dag,
+        };
 
         self.sessions.write().insert(session_id, session);
 
@@ -91,11 +95,11 @@ impl SessionManager {
         session_id: Uuid,
         targets: Option<Vec<String>>,
     ) -> Result<Vec<String>> {
-        let mut sessions = self.sessions.write();
+        let sessions = self.sessions.read();
         let session = sessions
-            .get_mut(&session_id)
+            .get(&session_id)
             .ok_or(Error::SessionNotFound(session_id))?;
-        session.dag.run(&session.executor, targets)
+        session.dag.run(Arc::clone(&session.executor), targets)
     }
 
     pub fn get_dag(&self, session_id: Uuid) -> Result<Vec<DagTableDetail>> {
@@ -326,6 +330,331 @@ mod tests {
         println!("Columns: {:?}", query_result.columns);
         for (i, row) in query_result.rows.iter().enumerate() {
             println!("Row {}: {:?}", i, row);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_multiple_sessions_run_dags_in_parallel() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::Instant;
+
+        let manager = Arc::new(SessionManager::new());
+        let num_sessions = 4;
+
+        let mut session_ids = Vec::new();
+        for _ in 0..num_sessions {
+            let session_id = manager.create_session().await.unwrap();
+
+            manager
+                .execute_statement(session_id, "CREATE TABLE base (v INT64)")
+                .unwrap();
+            for i in 0..100 {
+                manager
+                    .execute_statement(session_id, &format!("INSERT INTO base VALUES ({})", i))
+                    .unwrap();
+            }
+
+            let tables = vec![
+                crate::rpc::types::DagTableDef {
+                    name: "sum_table".to_string(),
+                    sql: Some("SELECT SUM(v) AS total FROM base".to_string()),
+                    schema: None,
+                    rows: vec![],
+                },
+                crate::rpc::types::DagTableDef {
+                    name: "count_table".to_string(),
+                    sql: Some("SELECT COUNT(*) AS cnt FROM base".to_string()),
+                    schema: None,
+                    rows: vec![],
+                },
+            ];
+            manager.register_dag(session_id, tables).unwrap();
+
+            session_ids.push(session_id);
+        }
+
+        static CONCURRENT_EXECUTIONS: AtomicUsize = AtomicUsize::new(0);
+        static MAX_CONCURRENT: AtomicUsize = AtomicUsize::new(0);
+
+        CONCURRENT_EXECUTIONS.store(0, Ordering::SeqCst);
+        MAX_CONCURRENT.store(0, Ordering::SeqCst);
+
+        let start = Instant::now();
+
+        let handles: Vec<_> = session_ids
+            .into_iter()
+            .map(|session_id| {
+                let manager = Arc::clone(&manager);
+                std::thread::spawn(move || {
+                    let prev = CONCURRENT_EXECUTIONS.fetch_add(1, Ordering::SeqCst);
+                    let current = prev + 1;
+
+                    loop {
+                        let max = MAX_CONCURRENT.load(Ordering::SeqCst);
+                        if current <= max {
+                            break;
+                        }
+                        if MAX_CONCURRENT
+                            .compare_exchange(max, current, Ordering::SeqCst, Ordering::SeqCst)
+                            .is_ok()
+                        {
+                            break;
+                        }
+                    }
+
+                    let result = manager.run_dag(session_id, None);
+
+                    CONCURRENT_EXECUTIONS.fetch_sub(1, Ordering::SeqCst);
+
+                    (session_id, result)
+                })
+            })
+            .collect();
+
+        let mut results = Vec::new();
+        for handle in handles {
+            results.push(handle.join().unwrap());
+        }
+
+        let elapsed = start.elapsed();
+
+        for (session_id, result) in &results {
+            let executed = result.as_ref().expect("DAG should execute successfully");
+            assert_eq!(executed.len(), 2, "Each session should execute 2 tables");
+
+            let sum_result = manager
+                .execute_query(*session_id, "SELECT * FROM sum_table")
+                .unwrap();
+            assert_eq!(sum_result.rows[0][0].as_i64().unwrap(), 4950); // sum of 0..99
+
+            let count_result = manager
+                .execute_query(*session_id, "SELECT * FROM count_table")
+                .unwrap();
+            assert_eq!(count_result.rows[0][0].as_i64().unwrap(), 100);
+        }
+
+        let max_concurrent = MAX_CONCURRENT.load(Ordering::SeqCst);
+        assert!(
+            max_concurrent >= 2,
+            "Expected at least 2 sessions to run concurrently, but max was {}",
+            max_concurrent
+        );
+
+        println!(
+            "Parallel session test: {} sessions, max {} concurrent, took {:?}",
+            num_sessions, max_concurrent, elapsed
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sessions_are_isolated_during_parallel_dag_execution() {
+        let manager = Arc::new(SessionManager::new());
+
+        let s1 = manager.create_session().await.unwrap();
+        let s2 = manager.create_session().await.unwrap();
+
+        manager
+            .execute_statement(s1, "CREATE TABLE data (v INT64)")
+            .unwrap();
+        manager
+            .execute_statement(s1, "INSERT INTO data VALUES (100)")
+            .unwrap();
+
+        manager
+            .execute_statement(s2, "CREATE TABLE data (v INT64)")
+            .unwrap();
+        manager
+            .execute_statement(s2, "INSERT INTO data VALUES (200)")
+            .unwrap();
+
+        manager
+            .register_dag(
+                s1,
+                vec![crate::rpc::types::DagTableDef {
+                    name: "result".to_string(),
+                    sql: Some("SELECT v * 2 AS doubled FROM data".to_string()),
+                    schema: None,
+                    rows: vec![],
+                }],
+            )
+            .unwrap();
+
+        manager
+            .register_dag(
+                s2,
+                vec![crate::rpc::types::DagTableDef {
+                    name: "result".to_string(),
+                    sql: Some("SELECT v * 3 AS tripled FROM data".to_string()),
+                    schema: None,
+                    rows: vec![],
+                }],
+            )
+            .unwrap();
+
+        let manager1 = Arc::clone(&manager);
+        let manager2 = Arc::clone(&manager);
+
+        let handle1 = std::thread::spawn(move || manager1.run_dag(s1, None));
+        let handle2 = std::thread::spawn(move || manager2.run_dag(s2, None));
+
+        let result1 = handle1.join().unwrap().unwrap();
+        let result2 = handle2.join().unwrap().unwrap();
+
+        assert_eq!(result1, vec!["result"]);
+        assert_eq!(result2, vec!["result"]);
+
+        let query1 = manager.execute_query(s1, "SELECT * FROM result").unwrap();
+        let query2 = manager.execute_query(s2, "SELECT * FROM result").unwrap();
+
+        assert_eq!(query1.rows[0][0].as_i64().unwrap(), 200); // 100 * 2
+        assert_eq!(query2.rows[0][0].as_i64().unwrap(), 600); // 200 * 3
+    }
+
+    #[tokio::test]
+    async fn test_many_sessions_parallel_with_complex_dags() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let manager = Arc::new(SessionManager::new());
+        let num_sessions = 8;
+
+        static COMPLETED_SESSIONS: AtomicUsize = AtomicUsize::new(0);
+        COMPLETED_SESSIONS.store(0, Ordering::SeqCst);
+
+        let mut session_ids = Vec::new();
+        for i in 0..num_sessions {
+            let session_id = manager.create_session().await.unwrap();
+
+            manager
+                .execute_statement(session_id, "CREATE TABLE source (n INT64)")
+                .unwrap();
+            manager
+                .execute_statement(session_id, &format!("INSERT INTO source VALUES ({})", i + 1))
+                .unwrap();
+
+            let tables = vec![
+                crate::rpc::types::DagTableDef {
+                    name: "step1".to_string(),
+                    sql: Some("SELECT n * 2 AS n FROM source".to_string()),
+                    schema: None,
+                    rows: vec![],
+                },
+                crate::rpc::types::DagTableDef {
+                    name: "step2".to_string(),
+                    sql: Some("SELECT n + 10 AS n FROM step1".to_string()),
+                    schema: None,
+                    rows: vec![],
+                },
+                crate::rpc::types::DagTableDef {
+                    name: "step3".to_string(),
+                    sql: Some("SELECT n * n AS n FROM step2".to_string()),
+                    schema: None,
+                    rows: vec![],
+                },
+            ];
+            manager.register_dag(session_id, tables).unwrap();
+
+            session_ids.push((session_id, i + 1));
+        }
+
+        let handles: Vec<_> = session_ids
+            .into_iter()
+            .map(|(session_id, base_value)| {
+                let manager = Arc::clone(&manager);
+                std::thread::spawn(move || {
+                    let result = manager.run_dag(session_id, None);
+                    COMPLETED_SESSIONS.fetch_add(1, Ordering::SeqCst);
+                    (session_id, base_value, result)
+                })
+            })
+            .collect();
+
+        let mut results = Vec::new();
+        for handle in handles {
+            results.push(handle.join().unwrap());
+        }
+
+        assert_eq!(
+            COMPLETED_SESSIONS.load(Ordering::SeqCst),
+            num_sessions,
+            "All sessions should complete"
+        );
+
+        for (session_id, base_value, result) in results {
+            let executed = result.unwrap();
+            assert_eq!(executed.len(), 3);
+
+            assert_eq!(executed[0], "step1");
+            assert_eq!(executed[1], "step2");
+            assert_eq!(executed[2], "step3");
+
+            let final_result = manager
+                .execute_query(session_id, "SELECT * FROM step3")
+                .unwrap();
+
+            let expected = {
+                let step1 = base_value * 2;
+                let step2 = step1 + 10;
+                let step3 = step2 * step2;
+                step3
+            };
+
+            assert_eq!(
+                final_result.rows[0][0].as_i64().unwrap(),
+                expected as i64,
+                "Session with base {} should have final result {}",
+                base_value,
+                expected
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dag_execution_order_within_session_is_serial() {
+        let manager = Arc::new(SessionManager::new());
+
+        let session_id = manager.create_session().await.unwrap();
+
+        manager
+            .execute_statement(session_id, "CREATE TABLE root (v INT64)")
+            .unwrap();
+        manager
+            .execute_statement(session_id, "INSERT INTO root VALUES (1)")
+            .unwrap();
+
+        let tables: Vec<crate::rpc::types::DagTableDef> = (0..5)
+            .map(|i| crate::rpc::types::DagTableDef {
+                name: format!("branch_{}", i),
+                sql: Some(format!("SELECT v + {} AS v FROM root", i)),
+                schema: None,
+                rows: vec![],
+            })
+            .collect();
+
+        let infos = manager.register_dag(session_id, tables).unwrap();
+
+        for info in &infos {
+            assert!(
+                info.dependencies.is_empty() || info.dependencies == vec!["root"],
+                "All branches should only depend on root (external table)"
+            );
+        }
+
+        let executed = manager.run_dag(session_id, None).unwrap();
+
+        assert_eq!(executed.len(), 5);
+
+        let mut sorted_executed = executed.clone();
+        sorted_executed.sort();
+        assert_eq!(
+            executed, sorted_executed,
+            "In mock mode, tables at same level should execute in alphabetical order"
+        );
+
+        for i in 0..5 {
+            let result = manager
+                .execute_query(session_id, &format!("SELECT * FROM branch_{}", i))
+                .unwrap();
+            assert_eq!(result.rows[0][0].as_i64().unwrap(), 1 + i as i64);
         }
     }
 }
