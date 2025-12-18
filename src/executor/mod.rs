@@ -20,6 +20,13 @@ pub enum Executor {
 }
 
 impl Executor {
+    pub fn mode(&self) -> ExecutorMode {
+        match self {
+            Executor::Mock(_) => ExecutorMode::Mock,
+            Executor::BigQuery(_) => ExecutorMode::BigQuery,
+        }
+    }
+
     pub fn execute_query(&self, sql: &str) -> Result<QueryResult> {
         match self {
             Executor::Mock(e) => e.execute_query(sql),
