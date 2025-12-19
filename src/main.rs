@@ -17,6 +17,7 @@ mod error;
 mod executor;
 mod rpc;
 mod session;
+mod utils;
 
 use executor::ExecutorMode;
 use rpc::{handle_websocket, process_message, RpcMethods};
