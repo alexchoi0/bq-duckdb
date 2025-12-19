@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use crate::error::{Error, Result};
 use crate::session::SessionManager;
+use crate::utils::json_to_sql_value;
 
 use super::types::{
     ClearDagParams, ClearDagResult, CreateSessionResult, CreateTableParams, CreateTableResult,
@@ -54,12 +55,9 @@ impl RpcMethods {
     async fn destroy_session(&self, params: Value) -> Result<Value> {
         let p: DestroySessionParams = serde_json::from_value(params)?;
         let session_id = parse_uuid(&p.session_id)?;
-
         let session_manager = Arc::clone(&self.session_manager);
 
-        tokio::task::spawn_blocking(move || session_manager.destroy_session(session_id))
-            .await
-            .map_err(|e| Error::Internal(format!("Task join error: {e}")))??;
+        run_blocking(move || session_manager.destroy_session(session_id)).await?;
 
         Ok(json!(DestroySessionResult { success: true }))
     }
@@ -68,14 +66,10 @@ impl RpcMethods {
         let p: QueryParams = serde_json::from_value(params)?;
         let session_id = parse_uuid(&p.session_id)?;
         let sql = p.sql;
-
         let session_manager = Arc::clone(&self.session_manager);
 
-        let result = tokio::task::spawn_blocking(move || {
-            session_manager.execute_query(session_id, &sql)
-        })
-        .await
-        .map_err(|e| Error::Internal(format!("Task join error: {e}")))??;
+        let result =
+            run_blocking(move || session_manager.execute_query(session_id, &sql)).await?;
 
         Ok(result.to_bq_response())
     }
@@ -90,19 +84,10 @@ impl RpcMethods {
             .map(|col| format!("{} {}", col.name, col.column_type))
             .collect();
 
-        let sql = format!(
-            "CREATE TABLE {} ({})",
-            p.table_name,
-            columns.join(", ")
-        );
-
+        let sql = format!("CREATE TABLE {} ({})", p.table_name, columns.join(", "));
         let session_manager = Arc::clone(&self.session_manager);
 
-        tokio::task::spawn_blocking(move || {
-            session_manager.execute_statement(session_id, &sql)
-        })
-        .await
-        .map_err(|e| Error::Internal(format!("Task join error: {e}")))??;
+        run_blocking(move || session_manager.execute_statement(session_id, &sql)).await?;
 
         Ok(json!(CreateTableResult { success: true }))
     }
@@ -132,19 +117,10 @@ impl RpcMethods {
             .collect();
 
         let row_count = values.len() as u64;
-
-        let sql = format!(
-            "INSERT INTO {} VALUES {}",
-            p.table_name,
-            values.join(", ")
-        );
-
+        let sql = format!("INSERT INTO {} VALUES {}", p.table_name, values.join(", "));
         let session_manager = Arc::clone(&self.session_manager);
-        tokio::task::spawn_blocking(move || {
-            session_manager.execute_statement(session_id, &sql)
-        })
-        .await
-        .map_err(|e| Error::Internal(format!("Task join error: {e}")))??;
+
+        run_blocking(move || session_manager.execute_statement(session_id, &sql)).await?;
 
         Ok(json!(InsertResult {
             inserted_rows: row_count,
@@ -155,14 +131,10 @@ impl RpcMethods {
         let p: RegisterDagParams = serde_json::from_value(params)?;
         let session_id = parse_uuid(&p.session_id)?;
         let tables = p.tables;
-
         let session_manager = Arc::clone(&self.session_manager);
 
-        let table_infos = tokio::task::spawn_blocking(move || {
-            session_manager.register_dag(session_id, tables)
-        })
-        .await
-        .map_err(|e| Error::Internal(format!("Task join error: {e}")))??;
+        let table_infos =
+            run_blocking(move || session_manager.register_dag(session_id, tables)).await?;
 
         Ok(json!(RegisterDagResult {
             success: true,
@@ -174,14 +146,10 @@ impl RpcMethods {
         let p: RunDagParams = serde_json::from_value(params)?;
         let session_id = parse_uuid(&p.session_id)?;
         let targets = p.table_names;
-
         let session_manager = Arc::clone(&self.session_manager);
 
-        let executed = tokio::task::spawn_blocking(move || {
-            session_manager.run_dag(session_id, targets)
-        })
-        .await
-        .map_err(|e| Error::Internal(format!("Task join error: {e}")))??;
+        let executed =
+            run_blocking(move || session_manager.run_dag(session_id, targets)).await?;
 
         Ok(json!(RunDagResult {
             success: true,
@@ -192,14 +160,9 @@ impl RpcMethods {
     async fn get_dag(&self, params: Value) -> Result<Value> {
         let p: GetDagParams = serde_json::from_value(params)?;
         let session_id = parse_uuid(&p.session_id)?;
-
         let session_manager = Arc::clone(&self.session_manager);
 
-        let tables = tokio::task::spawn_blocking(move || {
-            session_manager.get_dag(session_id)
-        })
-        .await
-        .map_err(|e| Error::Internal(format!("Task join error: {e}")))??;
+        let tables = run_blocking(move || session_manager.get_dag(session_id)).await?;
 
         Ok(json!(GetDagResult { tables }))
     }
@@ -207,14 +170,9 @@ impl RpcMethods {
     async fn clear_dag(&self, params: Value) -> Result<Value> {
         let p: ClearDagParams = serde_json::from_value(params)?;
         let session_id = parse_uuid(&p.session_id)?;
-
         let session_manager = Arc::clone(&self.session_manager);
 
-        tokio::task::spawn_blocking(move || {
-            session_manager.clear_dag(session_id)
-        })
-        .await
-        .map_err(|e| Error::Internal(format!("Task join error: {e}")))??;
+        run_blocking(move || session_manager.clear_dag(session_id)).await?;
 
         Ok(json!(ClearDagResult { success: true }))
     }
@@ -225,14 +183,12 @@ impl RpcMethods {
         let table_name = p.table_name;
         let path = p.path;
         let schema = p.schema;
-
         let session_manager = Arc::clone(&self.session_manager);
 
-        let row_count = tokio::task::spawn_blocking(move || {
+        let row_count = run_blocking(move || {
             session_manager.load_parquet(session_id, &table_name, &path, &schema)
         })
-        .await
-        .map_err(|e| Error::Internal(format!("Task join error: {e}")))??;
+        .await?;
 
         Ok(json!(LoadParquetResult {
             success: true,
@@ -245,22 +201,12 @@ fn parse_uuid(s: &str) -> Result<Uuid> {
     Uuid::parse_str(s).map_err(|_| Error::InvalidRequest(format!("Invalid session ID: {}", s)))
 }
 
-fn json_to_sql_value(val: &Value) -> String {
-    match val {
-        Value::Null => "NULL".to_string(),
-        Value::Bool(b) => b.to_string(),
-        Value::Number(n) => n.to_string(),
-        Value::String(s) => format!("'{}'", s.replace('\'', "''")),
-        Value::Array(arr) => {
-            let items: Vec<String> = arr.iter().map(json_to_sql_value).collect();
-            format!("[{}]", items.join(", "))
-        }
-        Value::Object(obj) => {
-            let fields: Vec<String> = obj
-                .iter()
-                .map(|(k, v)| format!("'{}': {}", k, json_to_sql_value(v)))
-                .collect();
-            format!("{{{}}}", fields.join(", "))
-        }
-    }
+async fn run_blocking<F, T>(f: F) -> Result<T>
+where
+    F: FnOnce() -> Result<T> + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| Error::Internal(format!("Task join error: {e}")))?
 }

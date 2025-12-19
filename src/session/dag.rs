@@ -7,6 +7,7 @@ use serde_json::Value;
 use crate::error::{Error, Result};
 use crate::executor::{Executor, ExecutorMode};
 use crate::rpc::types::{ColumnDef, DagTableDef, DagTableDetail, DagTableInfo};
+use crate::utils::json_to_sql_value;
 
 #[derive(Debug, Clone)]
 pub struct DagTable {
@@ -396,26 +397,6 @@ fn extract_dependencies(sql: &str, known_tables: &HashMap<String, DagTable>) -> 
     deps
 }
 
-fn json_to_sql_value(val: &Value) -> String {
-    match val {
-        Value::Null => "NULL".to_string(),
-        Value::Bool(b) => b.to_string(),
-        Value::Number(n) => n.to_string(),
-        Value::String(s) => format!("'{}'", s.replace('\'', "''")),
-        Value::Array(arr) => {
-            let items: Vec<String> = arr.iter().map(json_to_sql_value).collect();
-            format!("[{}]", items.join(", "))
-        }
-        Value::Object(obj) => {
-            let fields: Vec<String> = obj
-                .iter()
-                .map(|(k, v)| format!("'{}': {}", k, json_to_sql_value(v)))
-                .collect();
-            format!("{{{}}}", fields.join(", "))
-        }
-    }
-}
-
 fn infer_sql_type(val: &Value) -> &'static str {
     match val {
         Value::Null => "STRING",
@@ -439,7 +420,6 @@ mod tests {
     use crate::executor::YachtSqlExecutor;
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::Instant;
 
     fn create_mock_executor() -> Arc<Executor> {
         Arc::new(Executor::Mock(YachtSqlExecutor::new().unwrap()))
@@ -1331,7 +1311,6 @@ mod tests {
         assert_eq!(levels.len(), 1, "All tables should be in same level (independent)");
         assert_eq!(levels[0].len(), 3, "Should have 3 independent tables");
 
-        let _start = Instant::now();
         let executed = dag.run(executor.clone(), None).unwrap();
 
         assert_eq!(executed.len(), 3);
