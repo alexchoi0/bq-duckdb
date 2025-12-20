@@ -176,8 +176,7 @@ impl Dag {
             self.tables.keys().cloned().collect()
         };
 
-        let levels = self.topological_sort_levels(&subset)?;
-        self.run_levels(executor, levels)
+        self.run_subset(executor, subset)
     }
 
     pub fn retry_failed(
@@ -185,33 +184,35 @@ impl Dag {
         executor: Arc<Executor>,
         previous_result: &DagRunResult,
     ) -> Result<DagRunResult> {
-        let to_retry: HashSet<String> = previous_result
+        let subset: HashSet<String> = previous_result
             .failed
             .iter()
             .map(|e| e.table.clone())
             .chain(previous_result.skipped.iter().cloned())
             .collect();
 
-        if to_retry.is_empty() {
+        self.run_subset(executor, subset)
+    }
+
+    fn run_subset(
+        &self,
+        executor: Arc<Executor>,
+        subset: HashSet<String>,
+    ) -> Result<DagRunResult> {
+        if subset.is_empty() {
             return Ok(DagRunResult::default());
         }
 
-        let levels = self.topological_sort_levels(&to_retry)?;
-        self.run_levels(executor, levels)
-    }
-
-    fn run_levels(
-        &self,
-        executor: Arc<Executor>,
-        levels: Vec<Vec<String>>,
-    ) -> Result<DagRunResult> {
         match executor.mode() {
-            ExecutorMode::Mock => self.run_levels_serial(&executor, levels),
-            ExecutorMode::BigQuery => self.run_streaming(executor, levels),
+            ExecutorMode::Mock => {
+                let levels = self.topological_sort_levels(&subset)?;
+                self.run_serial(&executor, levels)
+            }
+            ExecutorMode::BigQuery => self.run_streaming(executor, subset),
         }
     }
 
-    fn run_levels_serial(
+    fn run_serial(
         &self,
         executor: &Executor,
         levels: Vec<Vec<String>>,
@@ -246,13 +247,9 @@ impl Dag {
     fn run_streaming(
         &self,
         executor: Arc<Executor>,
-        levels: Vec<Vec<String>>,
+        subset: HashSet<String>,
     ) -> Result<DagRunResult> {
-        let all_tables: Vec<String> = levels.into_iter().flatten().collect();
-        if all_tables.is_empty() {
-            return Ok(DagRunResult::default());
-        }
-
+        let all_tables: Vec<String> = subset.into_iter().collect();
         let total_count = all_tables.len();
 
         let pending_deps: HashMap<String, HashSet<String>> = all_tables
