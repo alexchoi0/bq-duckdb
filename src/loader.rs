@@ -6,31 +6,33 @@ use glob::glob;
 use crate::error::{Error, Result};
 
 #[derive(Debug, Clone)]
-pub struct SqlFile {
+pub struct LoadedFile {
     pub name: String,
-    pub sql: String,
+    pub content: String,
     pub path: PathBuf,
 }
 
-pub struct SqlLoader;
+pub type SqlFile = LoadedFile;
 
-impl SqlLoader {
-    pub fn load_dir(path: impl AsRef<Path>) -> Result<Vec<SqlFile>> {
-        let pattern = path.as_ref().join("**/*.sql");
+pub struct FileLoader;
+
+impl FileLoader {
+    pub fn load_dir(path: impl AsRef<Path>, extension: &str) -> Result<Vec<LoadedFile>> {
+        let pattern = path.as_ref().join(format!("**/*.{}", extension));
         let pattern_str = pattern.to_string_lossy();
 
-        let sql_files: Vec<PathBuf> = glob(&pattern_str)
+        let files: Vec<PathBuf> = glob(&pattern_str)
             .map_err(|e| Error::Loader(format!("Invalid glob pattern: {}", e)))?
             .filter_map(|r| r.ok())
             .collect();
 
-        sql_files
+        files
             .into_iter()
-            .map(|sql_path| Self::load_file(&sql_path))
+            .map(|file_path| Self::load_file(&file_path))
             .collect()
     }
 
-    pub fn load_file(path: impl AsRef<Path>) -> Result<SqlFile> {
+    pub fn load_file(path: impl AsRef<Path>) -> Result<LoadedFile> {
         let path = path.as_ref();
 
         let name = path
@@ -39,13 +41,25 @@ impl SqlLoader {
             .ok_or_else(|| Error::Loader(format!("Invalid filename: {}", path.display())))?
             .to_string();
 
-        let sql = fs::read_to_string(path)
+        let content = fs::read_to_string(path)
             .map_err(|e| Error::Loader(format!("Failed to read {}: {}", path.display(), e)))?;
 
-        Ok(SqlFile {
+        Ok(LoadedFile {
             name,
-            sql,
+            content,
             path: path.to_path_buf(),
         })
+    }
+}
+
+pub struct SqlLoader;
+
+impl SqlLoader {
+    pub fn load_dir(path: impl AsRef<Path>) -> Result<Vec<SqlFile>> {
+        FileLoader::load_dir(path, "sql")
+    }
+
+    pub fn load_file(path: impl AsRef<Path>) -> Result<SqlFile> {
+        FileLoader::load_file(path)
     }
 }

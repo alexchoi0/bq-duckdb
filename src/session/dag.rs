@@ -117,7 +117,7 @@ impl Dag {
         for file in &files {
             let table = DagTable {
                 name: file.name.clone(),
-                sql: Some(file.sql.clone()),
+                sql: Some(file.content.clone()),
                 schema: None,
                 rows: Vec::new(),
                 dependencies: Vec::new(),
@@ -127,7 +127,7 @@ impl Dag {
         }
 
         for file in &files {
-            let deps = extract_dependencies(&file.sql, &tables);
+            let deps = extract_dependencies(&file.content, &tables);
             if let Some(table) = tables.get_mut(&file.name) {
                 table.dependencies = deps;
             }
