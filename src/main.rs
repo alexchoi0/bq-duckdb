@@ -79,7 +79,12 @@ struct Args {
     #[arg(long, value_parser = parse_transport, default_value = "ws://localhost:3000", help = "Transport: stdio or ws://localhost:<port>")]
     transport: Transport,
 
-    #[arg(long, value_enum, default_value = "mock", help = "Execution backend: mock (YachtSQL) or bigquery (real BigQuery)")]
+    #[arg(
+        long,
+        value_enum,
+        default_value = "mock",
+        help = "Execution backend: mock (YachtSQL) or bigquery (real BigQuery)"
+    )]
     backend: Backend,
 }
 

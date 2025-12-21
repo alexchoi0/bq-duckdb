@@ -46,7 +46,9 @@ impl RpcMethods {
     }
 
     async fn ping(&self, _params: Value) -> Result<Value> {
-        Ok(json!(PingResult { message: "pong".to_string() }))
+        Ok(json!(PingResult {
+            message: "pong".to_string()
+        }))
     }
 
     async fn create_session(&self, _params: Value) -> Result<Value> {
@@ -60,9 +62,8 @@ impl RpcMethods {
     async fn destroy_session(&self, params: Value) -> Result<Value> {
         let p: DestroySessionParams = serde_json::from_value(params)?;
         let session_id = parse_uuid(&p.session_id)?;
-        let session_manager = Arc::clone(&self.session_manager);
 
-        run_blocking(move || session_manager.destroy_session(session_id)).await?;
+        self.session_manager.destroy_session(session_id)?;
 
         Ok(json!(DestroySessionResult { success: true }))
     }
@@ -70,11 +71,11 @@ impl RpcMethods {
     async fn query(&self, params: Value) -> Result<Value> {
         let p: QueryParams = serde_json::from_value(params)?;
         let session_id = parse_uuid(&p.session_id)?;
-        let sql = p.sql;
-        let session_manager = Arc::clone(&self.session_manager);
 
-        let result =
-            run_blocking(move || session_manager.execute_query(session_id, &sql)).await?;
+        let result = self
+            .session_manager
+            .execute_query(session_id, &p.sql)
+            .await?;
 
         Ok(result.to_bq_response())
     }
@@ -90,9 +91,10 @@ impl RpcMethods {
             .collect();
 
         let sql = format!("CREATE TABLE {} ({})", p.table_name, columns.join(", "));
-        let session_manager = Arc::clone(&self.session_manager);
 
-        run_blocking(move || session_manager.execute_statement(session_id, &sql)).await?;
+        self.session_manager
+            .execute_statement(session_id, &sql)
+            .await?;
 
         Ok(json!(CreateTableResult { success: true }))
     }
@@ -123,9 +125,10 @@ impl RpcMethods {
 
         let row_count = values.len() as u64;
         let sql = format!("INSERT INTO {} VALUES {}", p.table_name, values.join(", "));
-        let session_manager = Arc::clone(&self.session_manager);
 
-        run_blocking(move || session_manager.execute_statement(session_id, &sql)).await?;
+        self.session_manager
+            .execute_statement(session_id, &sql)
+            .await?;
 
         Ok(json!(InsertResult {
             inserted_rows: row_count,
@@ -135,11 +138,8 @@ impl RpcMethods {
     async fn register_dag(&self, params: Value) -> Result<Value> {
         let p: RegisterDagParams = serde_json::from_value(params)?;
         let session_id = parse_uuid(&p.session_id)?;
-        let tables = p.tables;
-        let session_manager = Arc::clone(&self.session_manager);
 
-        let table_infos =
-            run_blocking(move || session_manager.register_dag(session_id, tables)).await?;
+        let table_infos = self.session_manager.register_dag(session_id, p.tables)?;
 
         Ok(json!(RegisterDagResult {
             success: true,
@@ -202,9 +202,8 @@ impl RpcMethods {
     async fn get_dag(&self, params: Value) -> Result<Value> {
         let p: GetDagParams = serde_json::from_value(params)?;
         let session_id = parse_uuid(&p.session_id)?;
-        let session_manager = Arc::clone(&self.session_manager);
 
-        let tables = run_blocking(move || session_manager.get_dag(session_id)).await?;
+        let tables = self.session_manager.get_dag(session_id)?;
 
         Ok(json!(GetDagResult { tables }))
     }
@@ -212,9 +211,8 @@ impl RpcMethods {
     async fn clear_dag(&self, params: Value) -> Result<Value> {
         let p: ClearDagParams = serde_json::from_value(params)?;
         let session_id = parse_uuid(&p.session_id)?;
-        let session_manager = Arc::clone(&self.session_manager);
 
-        run_blocking(move || session_manager.clear_dag(session_id)).await?;
+        self.session_manager.clear_dag(session_id)?;
 
         Ok(json!(ClearDagResult { success: true }))
     }
@@ -222,15 +220,11 @@ impl RpcMethods {
     async fn load_parquet(&self, params: Value) -> Result<Value> {
         let p: LoadParquetParams = serde_json::from_value(params)?;
         let session_id = parse_uuid(&p.session_id)?;
-        let table_name = p.table_name;
-        let path = p.path;
-        let schema = p.schema;
-        let session_manager = Arc::clone(&self.session_manager);
 
-        let row_count = run_blocking(move || {
-            session_manager.load_parquet(session_id, &table_name, &path, &schema)
-        })
-        .await?;
+        let row_count = self
+            .session_manager
+            .load_parquet(session_id, &p.table_name, &p.path, &p.schema)
+            .await?;
 
         Ok(json!(LoadParquetResult {
             success: true,
@@ -241,9 +235,8 @@ impl RpcMethods {
     async fn list_tables(&self, params: Value) -> Result<Value> {
         let p: ListTablesParams = serde_json::from_value(params)?;
         let session_id = parse_uuid(&p.session_id)?;
-        let session_manager = Arc::clone(&self.session_manager);
 
-        let table_infos = run_blocking(move || session_manager.list_tables(session_id)).await?;
+        let table_infos = self.session_manager.list_tables(session_id).await?;
 
         Ok(json!(ListTablesResult {
             tables: table_infos
@@ -256,15 +249,14 @@ impl RpcMethods {
     async fn describe_table(&self, params: Value) -> Result<Value> {
         let p: DescribeTableParams = serde_json::from_value(params)?;
         let session_id = parse_uuid(&p.session_id)?;
-        let table_name = p.table_name.clone();
-        let result_name = p.table_name;
-        let session_manager = Arc::clone(&self.session_manager);
 
-        let (schema, row_count) =
-            run_blocking(move || session_manager.describe_table(session_id, &table_name)).await?;
+        let (schema, row_count) = self
+            .session_manager
+            .describe_table(session_id, &p.table_name)
+            .await?;
 
         Ok(json!(DescribeTableResult {
-            name: result_name,
+            name: p.table_name,
             schema: schema
                 .into_iter()
                 .map(|(name, col_type)| ColumnDef {

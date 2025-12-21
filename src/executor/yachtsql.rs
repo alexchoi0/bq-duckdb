@@ -2,47 +2,45 @@ use std::fs::File;
 
 use arrow::array::Array;
 use arrow::datatypes::DataType as ArrowDataType;
-use parking_lot::Mutex;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use serde_json::{json, Value as JsonValue};
-use yachtsql::{DataType, QueryExecutor as YachtExecutor, Table, Value as YachtValue};
+use yachtsql::{AsyncQueryExecutor, DataType, Table, Value as YachtValue};
 
 use crate::error::{Error, Result};
 
+#[derive(Clone)]
 pub struct YachtSqlExecutor {
-    executor: Mutex<YachtExecutor>,
+    executor: AsyncQueryExecutor,
 }
 
 impl YachtSqlExecutor {
-    pub fn new() -> Result<Self> {
-        let executor = YachtExecutor::new();
-
-        Ok(Self {
-            executor: Mutex::new(executor),
-        })
+    pub fn new() -> Self {
+        Self {
+            executor: AsyncQueryExecutor::new(),
+        }
     }
 
-    pub fn execute_query(&self, sql: &str) -> Result<QueryResult> {
-        let mut executor = self.executor.lock();
-
-        let result = executor
+    pub async fn execute_query(&self, sql: &str) -> Result<QueryResult> {
+        let result = self
+            .executor
             .execute_sql(sql)
+            .await
             .map_err(|e| Error::Executor(format!("{}\n\nSQL: {}", e, sql)))?;
 
         table_to_query_result(&result)
     }
 
-    pub fn execute_statement(&self, sql: &str) -> Result<u64> {
-        let mut executor = self.executor.lock();
-
-        let result = executor
+    pub async fn execute_statement(&self, sql: &str) -> Result<u64> {
+        let result = self
+            .executor
             .execute_sql(sql)
+            .await
             .map_err(|e| Error::Executor(format!("{}\n\nSQL: {}", e, sql)))?;
 
         Ok(result.row_count() as u64)
     }
 
-    pub fn load_parquet(
+    pub async fn load_parquet(
         &self,
         table_name: &str,
         path: &str,
@@ -69,9 +67,9 @@ impl YachtSqlExecutor {
             columns.join(", ")
         );
 
-        let mut executor = self.executor.lock();
-        executor
+        self.executor
             .execute_sql(&create_sql)
+            .await
             .map_err(|e| Error::Executor(format!("{}\n\nSQL: {}", e, create_sql)))?;
 
         let mut total_rows = 0u64;
@@ -87,9 +85,9 @@ impl YachtSqlExecutor {
             let mut all_values: Vec<Vec<String>> = Vec::new();
             for row_idx in 0..batch.num_rows() {
                 let mut row_values = Vec::new();
-                for col_idx in 0..batch.num_columns() {
+                for (col_idx, col_schema) in schema.iter().enumerate().take(batch.num_columns()) {
                     let col = batch.column(col_idx);
-                    let bq_type = &schema[col_idx].column_type;
+                    let bq_type = &col_schema.column_type;
                     let value = arrow_value_to_sql(col.as_ref(), row_idx, bq_type);
                     row_values.push(value);
                 }
@@ -107,8 +105,9 @@ impl YachtSqlExecutor {
                 values_str.join(", ")
             );
 
-            executor
+            self.executor
                 .execute_sql(&insert_sql)
+                .await
                 .map_err(|e| Error::Executor(format!("{}\n\nSQL: {}", e, insert_sql)))?;
 
             total_rows += batch.num_rows() as u64;
@@ -117,10 +116,10 @@ impl YachtSqlExecutor {
         Ok(total_rows)
     }
 
-    pub fn list_tables(&self) -> Result<Vec<(String, u64)>> {
+    pub async fn list_tables(&self) -> Result<Vec<(String, u64)>> {
         let result = self.execute_query(
             "SELECT table_name, table_rows FROM information_schema.tables WHERE table_schema = 'public'"
-        )?;
+        ).await?;
 
         let tables: Vec<(String, u64)> = result
             .rows
@@ -135,12 +134,12 @@ impl YachtSqlExecutor {
         Ok(tables)
     }
 
-    pub fn describe_table(&self, table_name: &str) -> Result<(Vec<(String, String)>, u64)> {
+    pub async fn describe_table(&self, table_name: &str) -> Result<(Vec<(String, String)>, u64)> {
         let schema_sql = format!(
             "SELECT column_name, data_type FROM information_schema.columns WHERE table_name = '{}' ORDER BY ordinal_position",
             table_name
         );
-        let schema_result = self.execute_query(&schema_sql)?;
+        let schema_result = self.execute_query(&schema_sql).await?;
 
         let schema: Vec<(String, String)> = schema_result
             .rows
@@ -153,7 +152,7 @@ impl YachtSqlExecutor {
             .collect();
 
         let count_sql = format!("SELECT COUNT(*) FROM {}", table_name);
-        let count_result = self.execute_query(&count_sql)?;
+        let count_result = self.execute_query(&count_sql).await?;
         let row_count = count_result
             .rows
             .first()
@@ -167,7 +166,7 @@ impl YachtSqlExecutor {
 
 impl Default for YachtSqlExecutor {
     fn default() -> Self {
-        Self::new().expect("Failed to create YachtSQL executor")
+        Self::new()
     }
 }
 
@@ -221,7 +220,9 @@ fn table_to_query_result(table: &Table) -> Result<QueryResult> {
         })
         .collect();
 
-    let records = table.to_records().map_err(|e| Error::Executor(e.to_string()))?;
+    let records = table
+        .to_records()
+        .map_err(|e| Error::Executor(e.to_string()))?;
     let rows: Vec<Vec<JsonValue>> = records
         .iter()
         .map(|record| record.values().iter().map(yacht_value_to_json).collect())
@@ -280,6 +281,7 @@ fn yacht_value_to_json(value: &YachtValue) -> JsonValue {
         YachtValue::Geography(g) => JsonValue::String(g.clone()),
         YachtValue::Interval(i) => JsonValue::String(format!("{:?}", i)),
         YachtValue::Range(r) => JsonValue::String(format!("{:?}", r)),
+        YachtValue::Default => JsonValue::Null,
     }
 }
 
@@ -388,19 +390,31 @@ fn arrow_value_to_sql(array: &dyn Array, row: usize, bq_type: &str) -> String {
         ArrowDataType::Timestamp(unit, _) => {
             let micros = match unit {
                 arrow::datatypes::TimeUnit::Second => {
-                    let arr = array.as_any().downcast_ref::<TimestampSecondArray>().unwrap();
+                    let arr = array
+                        .as_any()
+                        .downcast_ref::<TimestampSecondArray>()
+                        .unwrap();
                     arr.value(row) * 1_000_000
                 }
                 arrow::datatypes::TimeUnit::Millisecond => {
-                    let arr = array.as_any().downcast_ref::<TimestampMillisecondArray>().unwrap();
+                    let arr = array
+                        .as_any()
+                        .downcast_ref::<TimestampMillisecondArray>()
+                        .unwrap();
                     arr.value(row) * 1_000
                 }
                 arrow::datatypes::TimeUnit::Microsecond => {
-                    let arr = array.as_any().downcast_ref::<TimestampMicrosecondArray>().unwrap();
+                    let arr = array
+                        .as_any()
+                        .downcast_ref::<TimestampMicrosecondArray>()
+                        .unwrap();
                     arr.value(row)
                 }
                 arrow::datatypes::TimeUnit::Nanosecond => {
-                    let arr = array.as_any().downcast_ref::<TimestampNanosecondArray>().unwrap();
+                    let arr = array
+                        .as_any()
+                        .downcast_ref::<TimestampNanosecondArray>()
+                        .unwrap();
                     arr.value(row) / 1_000
                 }
             };

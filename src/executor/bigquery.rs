@@ -9,7 +9,6 @@ use google_cloud_bigquery::http::table::{
 };
 use google_cloud_bigquery::http::tabledata::list::Value as BqValue;
 use serde_json::Value as JsonValue;
-use tokio::runtime::Handle;
 
 use crate::error::{Error, Result};
 use crate::rpc::types::ColumnDef;
@@ -30,8 +29,8 @@ impl BigQueryExecutor {
             .await
             .map_err(|e| Error::Executor(format!("Failed to authenticate: {}", e)))?;
 
-        let project_id = project_id
-            .ok_or_else(|| Error::Executor("No project_id in credentials".into()))?;
+        let project_id =
+            project_id.ok_or_else(|| Error::Executor("No project_id in credentials".into()))?;
 
         let client = Client::new(config)
             .await
@@ -50,7 +49,7 @@ impl BigQueryExecutor {
         })
     }
 
-    pub fn load_parquet(
+    pub async fn load_parquet(
         &self,
         table_name: &str,
         path: &str,
@@ -66,17 +65,6 @@ impl BigQueryExecutor {
             Error::Executor("BQ_DATASET environment variable must be set for load_parquet".into())
         })?;
 
-        let handle = Handle::current();
-        handle.block_on(self.load_parquet_async(table_name, path, schema, dataset_id))
-    }
-
-    async fn load_parquet_async(
-        &self,
-        table_name: &str,
-        gcs_path: &str,
-        schema: &[ColumnDef],
-        dataset_id: &str,
-    ) -> Result<u64> {
         let table_schema = TableSchema {
             fields: schema
                 .iter()
@@ -89,7 +77,7 @@ impl BigQueryExecutor {
         };
 
         let load_config = JobConfigurationLoad {
-            source_uris: vec![gcs_path.to_string()],
+            source_uris: vec![path.to_string()],
             destination_table: TableReference {
                 project_id: self.project_id.clone(),
                 dataset_id: dataset_id.to_string(),
@@ -159,12 +147,7 @@ impl BigQueryExecutor {
         }
     }
 
-    pub fn execute_query(&self, sql: &str) -> Result<QueryResult> {
-        let handle = Handle::current();
-        handle.block_on(self.execute_query_async(sql))
-    }
-
-    async fn execute_query_async(&self, sql: &str) -> Result<QueryResult> {
+    pub async fn execute_query(&self, sql: &str) -> Result<QueryResult> {
         let request = QueryRequest {
             query: sql.to_string(),
             use_legacy_sql: false,
@@ -177,7 +160,9 @@ impl BigQueryExecutor {
             .job()
             .query(&self.project_id, &request)
             .await
-            .map_err(|e| Error::Executor(format!("BigQuery query failed: {}\n\nSQL: {}", e, sql)))?;
+            .map_err(|e| {
+                Error::Executor(format!("BigQuery query failed: {}\n\nSQL: {}", e, sql))
+            })?;
 
         let columns: Vec<ColumnInfo> = response
             .schema
@@ -198,19 +183,18 @@ impl BigQueryExecutor {
             .unwrap_or_default()
             .into_iter()
             .map(|tuple| {
-                tuple.f.into_iter().map(|cell| bq_value_to_json(cell.v)).collect()
+                tuple
+                    .f
+                    .into_iter()
+                    .map(|cell| bq_value_to_json(cell.v))
+                    .collect()
             })
             .collect();
 
         Ok(QueryResult { columns, rows })
     }
 
-    pub fn execute_statement(&self, sql: &str) -> Result<u64> {
-        let handle = Handle::current();
-        handle.block_on(self.execute_statement_async(sql))
-    }
-
-    async fn execute_statement_async(&self, sql: &str) -> Result<u64> {
+    pub async fn execute_statement(&self, sql: &str) -> Result<u64> {
         let request = QueryRequest {
             query: sql.to_string(),
             use_legacy_sql: false,
@@ -223,7 +207,9 @@ impl BigQueryExecutor {
             .job()
             .query(&self.project_id, &request)
             .await
-            .map_err(|e| Error::Executor(format!("BigQuery statement failed: {}\n\nSQL: {}", e, sql)))?;
+            .map_err(|e| {
+                Error::Executor(format!("BigQuery statement failed: {}\n\nSQL: {}", e, sql))
+            })?;
 
         Ok(response.num_dml_affected_rows.unwrap_or(0) as u64)
     }

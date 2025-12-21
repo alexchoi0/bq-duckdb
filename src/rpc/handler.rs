@@ -35,7 +35,7 @@ pub async fn handle_websocket(socket: WebSocket, methods: Arc<RpcMethods>) {
             }
         };
 
-        if sender.send(Message::Text(response_text.into())).await.is_err() {
+        if sender.send(Message::Text(response_text)).await.is_err() {
             error!("Failed to send response");
             break;
         }
@@ -64,7 +64,8 @@ pub async fn process_message(msg: &str, methods: &RpcMethods) -> RpcResponse {
     match methods.dispatch(&request.method, request.params).await {
         Ok(result) => RpcResponse::success(id, result),
         Err(e) => {
-            if matches!(e, crate::error::Error::InvalidRequest(ref msg) if msg.starts_with("Unknown method")) {
+            if matches!(e, crate::error::Error::InvalidRequest(ref msg) if msg.starts_with("Unknown method"))
+            {
                 RpcResponse::method_not_found(id, &method_name)
             } else {
                 let e = e.with_context(&method_name, session_id.as_deref());
