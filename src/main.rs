@@ -1,3 +1,5 @@
+#![allow(dead_code, unused_imports)]
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -15,6 +17,7 @@ use tracing_subscriber::EnvFilter;
 
 mod error;
 mod executor;
+mod loader;
 mod rpc;
 mod session;
 mod utils;

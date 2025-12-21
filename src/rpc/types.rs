@@ -136,6 +136,62 @@ pub struct ColumnDef {
     pub column_type: String,
 }
 
+impl ColumnDef {
+    pub fn new(name: impl Into<String>, column_type: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            column_type: column_type.into(),
+        }
+    }
+
+    pub fn int64(name: impl Into<String>) -> Self {
+        Self::new(name, "INT64")
+    }
+
+    pub fn string(name: impl Into<String>) -> Self {
+        Self::new(name, "STRING")
+    }
+
+    pub fn float64(name: impl Into<String>) -> Self {
+        Self::new(name, "FLOAT64")
+    }
+
+    pub fn bool(name: impl Into<String>) -> Self {
+        Self::new(name, "BOOLEAN")
+    }
+
+    pub fn date(name: impl Into<String>) -> Self {
+        Self::new(name, "DATE")
+    }
+
+    pub fn timestamp(name: impl Into<String>) -> Self {
+        Self::new(name, "TIMESTAMP")
+    }
+
+    pub fn numeric(name: impl Into<String>) -> Self {
+        Self::new(name, "NUMERIC")
+    }
+
+    pub fn bytes(name: impl Into<String>) -> Self {
+        Self::new(name, "BYTES")
+    }
+}
+
+impl From<(String, String)> for ColumnDef {
+    fn from((name, column_type): (String, String)) -> Self {
+        Self { name, column_type }
+    }
+}
+
+impl From<(&str, &str)> for ColumnDef {
+    fn from((name, column_type): (&str, &str)) -> Self {
+        Self {
+            name: name.to_string(),
+            column_type: column_type.to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct CreateTableResult {
     pub success: bool,

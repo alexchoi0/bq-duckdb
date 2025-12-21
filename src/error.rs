@@ -16,6 +16,9 @@ pub enum Error {
 
     #[error("Internal error: {0}")]
     Internal(String),
+
+    #[error("Loader error: {0}")]
+    Loader(String),
 }
 
 impl Error {
@@ -26,6 +29,7 @@ impl Error {
             Error::SessionNotFound(_) => -32002,
             Error::InvalidRequest(_) => -32600,
             Error::Internal(_) => -32603,
+            Error::Loader(_) => -32001,
         }
     }
 
@@ -38,6 +42,7 @@ impl Error {
         match self {
             Error::Executor(msg) => Error::Executor(format!("{} {}", context, msg)),
             Error::Internal(msg) => Error::Internal(format!("{} {}", context, msg)),
+            Error::Loader(msg) => Error::Loader(format!("{} {}", context, msg)),
             other => other,
         }
     }
