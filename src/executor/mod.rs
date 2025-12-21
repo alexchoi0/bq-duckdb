@@ -2,8 +2,8 @@ mod bigquery;
 mod yachtsql;
 
 pub use self::bigquery::BigQueryExecutor;
-pub use self::yachtsql::QueryResult;
-pub use self::yachtsql::YachtSqlExecutor;
+pub use self::yachtsql::{ColumnInfo, QueryResult, YachtSqlExecutor};
+pub use crate::rpc::types::ColumnDef;
 
 use crate::error::Result;
 
@@ -20,10 +20,41 @@ pub enum Executor {
 }
 
 impl Executor {
+    #[allow(dead_code)]
+    pub fn mock() -> Self {
+        Self::Mock(YachtSqlExecutor::new())
+    }
+
+    #[allow(dead_code)]
+    pub async fn bigquery() -> Result<Self> {
+        Ok(Self::BigQuery(BigQueryExecutor::new().await?))
+    }
+
     pub fn mode(&self) -> ExecutorMode {
         match self {
             Executor::Mock(_) => ExecutorMode::Mock,
             Executor::BigQuery(_) => ExecutorMode::BigQuery,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn is_mock(&self) -> bool {
+        matches!(self, Executor::Mock(_))
+    }
+
+    #[allow(dead_code)]
+    pub async fn query(&self, sql: &str) -> Result<QueryResult> {
+        match self {
+            Executor::Mock(e) => e.execute_query(sql).await,
+            Executor::BigQuery(e) => e.execute_query(sql).await,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub async fn execute(&self, sql: &str) -> Result<u64> {
+        match self {
+            Executor::Mock(e) => e.execute_statement(sql).await,
+            Executor::BigQuery(e) => e.execute_statement(sql).await,
         }
     }
 
