@@ -2,11 +2,16 @@
 name = "bq-runner"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+description = "BigQuery SQL runner with mock and production backends"
+repository = "https://github.com/alexchoi0/bq-runner"
+keywords = ["bigquery", "sql", "database", "testing"]
+categories = ["database", "development-tools::testing"]
 
 [dependencies]
 tokio = { version = "1", features = ["full", "sync"] }
 axum = { version = "0.7", features = ["ws"] }
-yachtsql = { git = "https://github.com/alexchoi0/yachtSQL", features = ["concurrent"] }
+yachtsql = { path = "../yachtsql" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

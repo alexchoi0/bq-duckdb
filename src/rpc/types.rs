@@ -361,3 +361,62 @@ pub struct DescribeTableResult {
     #[serde(rename = "rowCount")]
     pub row_count: u64,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct SetDefaultProjectParams {
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    pub project: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SetDefaultProjectResult {
+    pub success: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GetDefaultProjectParams {
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GetDefaultProjectResult {
+    pub project: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GetProjectsParams {
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GetProjectsResult {
+    pub projects: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GetDatasetsParams {
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    pub project: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GetDatasetsResult {
+    pub datasets: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GetTablesInDatasetParams {
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    pub project: String,
+    pub dataset: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GetTablesInDatasetResult {
+    pub tables: Vec<String>,
+}

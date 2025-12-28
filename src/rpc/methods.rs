@@ -10,10 +10,12 @@ use crate::utils::json_to_sql_value;
 use super::types::{
     ClearDagParams, ClearDagResult, ColumnDef, CreateSessionResult, CreateTableParams,
     CreateTableResult, DescribeTableParams, DescribeTableResult, DestroySessionParams,
-    DestroySessionResult, GetDagParams, GetDagResult, InsertParams, InsertResult, ListTablesParams,
-    ListTablesResult, LoadParquetParams, LoadParquetResult, PingResult, QueryParams,
-    RegisterDagParams, RegisterDagResult, RetryDagParams, RunDagParams, RunDagResult,
-    TableErrorInfo, TableInfo,
+    DestroySessionResult, GetDagParams, GetDagResult, GetDatasetsParams, GetDatasetsResult,
+    GetDefaultProjectParams, GetDefaultProjectResult, GetProjectsParams, GetProjectsResult,
+    GetTablesInDatasetParams, GetTablesInDatasetResult, InsertParams, InsertResult,
+    ListTablesParams, ListTablesResult, LoadParquetParams, LoadParquetResult, PingResult,
+    QueryParams, RegisterDagParams, RegisterDagResult, RetryDagParams, RunDagParams, RunDagResult,
+    SetDefaultProjectParams, SetDefaultProjectResult, TableErrorInfo, TableInfo,
 };
 
 pub struct RpcMethods {
@@ -41,6 +43,11 @@ impl RpcMethods {
             "bq.loadParquet" => self.load_parquet(params).await,
             "bq.listTables" => self.list_tables(params).await,
             "bq.describeTable" => self.describe_table(params).await,
+            "bq.setDefaultProject" => self.set_default_project(params).await,
+            "bq.getDefaultProject" => self.get_default_project(params).await,
+            "bq.getProjects" => self.get_projects(params).await,
+            "bq.getDatasets" => self.get_datasets(params).await,
+            "bq.getTablesInDataset" => self.get_tables_in_dataset(params).await,
             _ => Err(Error::InvalidRequest(format!("Unknown method: {}", method))),
         }
     }
@@ -266,6 +273,54 @@ impl RpcMethods {
                 .collect(),
             row_count,
         }))
+    }
+
+    async fn set_default_project(&self, params: Value) -> Result<Value> {
+        let p: SetDefaultProjectParams = serde_json::from_value(params)?;
+        let session_id = parse_uuid(&p.session_id)?;
+
+        self.session_manager
+            .set_default_project(session_id, p.project)?;
+
+        Ok(json!(SetDefaultProjectResult { success: true }))
+    }
+
+    async fn get_default_project(&self, params: Value) -> Result<Value> {
+        let p: GetDefaultProjectParams = serde_json::from_value(params)?;
+        let session_id = parse_uuid(&p.session_id)?;
+
+        let project = self.session_manager.get_default_project(session_id)?;
+
+        Ok(json!(GetDefaultProjectResult { project }))
+    }
+
+    async fn get_projects(&self, params: Value) -> Result<Value> {
+        let p: GetProjectsParams = serde_json::from_value(params)?;
+        let session_id = parse_uuid(&p.session_id)?;
+
+        let projects = self.session_manager.get_projects(session_id)?;
+
+        Ok(json!(GetProjectsResult { projects }))
+    }
+
+    async fn get_datasets(&self, params: Value) -> Result<Value> {
+        let p: GetDatasetsParams = serde_json::from_value(params)?;
+        let session_id = parse_uuid(&p.session_id)?;
+
+        let datasets = self.session_manager.get_datasets(session_id, &p.project)?;
+
+        Ok(json!(GetDatasetsResult { datasets }))
+    }
+
+    async fn get_tables_in_dataset(&self, params: Value) -> Result<Value> {
+        let p: GetTablesInDatasetParams = serde_json::from_value(params)?;
+        let session_id = parse_uuid(&p.session_id)?;
+
+        let tables = self
+            .session_manager
+            .get_tables_in_dataset(session_id, &p.project, &p.dataset)?;
+
+        Ok(json!(GetTablesInDatasetResult { tables }))
     }
 }
 

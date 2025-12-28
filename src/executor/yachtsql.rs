@@ -162,6 +162,28 @@ impl YachtSqlExecutor {
 
         Ok((schema, row_count))
     }
+
+    pub fn set_default_project(&self, project: Option<String>) {
+        self.executor.catalog().set_default_project(project);
+    }
+
+    pub fn get_default_project(&self) -> Option<String> {
+        self.executor.catalog().get_default_project()
+    }
+
+    pub fn get_projects(&self) -> Vec<String> {
+        self.executor.catalog().get_projects()
+    }
+
+    pub fn get_datasets(&self, project: &str) -> Vec<String> {
+        self.executor.catalog().get_datasets(project)
+    }
+
+    pub fn get_tables_in_dataset(&self, project: &str, dataset: &str) -> Vec<String> {
+        self.executor
+            .catalog()
+            .get_tables_in_dataset(project, dataset)
+    }
 }
 
 impl Default for YachtSqlExecutor {
@@ -281,6 +303,7 @@ fn yacht_value_to_json(value: &YachtValue) -> JsonValue {
         YachtValue::Geography(g) => JsonValue::String(g.clone()),
         YachtValue::Interval(i) => JsonValue::String(format!("{:?}", i)),
         YachtValue::Range(r) => JsonValue::String(format!("{:?}", r)),
+        YachtValue::BigNumeric(n) => JsonValue::String(n.to_string()),
         YachtValue::Default => JsonValue::Null,
     }
 }

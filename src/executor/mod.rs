@@ -101,4 +101,52 @@ impl Executor {
             )),
         }
     }
+
+    pub fn set_default_project(&self, project: Option<String>) -> Result<()> {
+        match self {
+            Executor::Mock(e) => {
+                e.set_default_project(project);
+                Ok(())
+            }
+            Executor::BigQuery(_) => Err(crate::error::Error::Executor(
+                "set_default_project not supported for BigQuery executor".to_string(),
+            )),
+        }
+    }
+
+    pub fn get_default_project(&self) -> Result<Option<String>> {
+        match self {
+            Executor::Mock(e) => Ok(e.get_default_project()),
+            Executor::BigQuery(_) => Err(crate::error::Error::Executor(
+                "get_default_project not supported for BigQuery executor".to_string(),
+            )),
+        }
+    }
+
+    pub fn get_projects(&self) -> Result<Vec<String>> {
+        match self {
+            Executor::Mock(e) => Ok(e.get_projects()),
+            Executor::BigQuery(_) => Err(crate::error::Error::Executor(
+                "get_projects not supported for BigQuery executor".to_string(),
+            )),
+        }
+    }
+
+    pub fn get_datasets(&self, project: &str) -> Result<Vec<String>> {
+        match self {
+            Executor::Mock(e) => Ok(e.get_datasets(project)),
+            Executor::BigQuery(_) => Err(crate::error::Error::Executor(
+                "get_datasets not supported for BigQuery executor".to_string(),
+            )),
+        }
+    }
+
+    pub fn get_tables_in_dataset(&self, project: &str, dataset: &str) -> Result<Vec<String>> {
+        match self {
+            Executor::Mock(e) => Ok(e.get_tables_in_dataset(project, dataset)),
+            Executor::BigQuery(_) => Err(crate::error::Error::Executor(
+                "get_tables_in_dataset not supported for BigQuery executor".to_string(),
+            )),
+        }
+    }
 }

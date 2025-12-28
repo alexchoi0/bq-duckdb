@@ -215,6 +215,66 @@ impl SessionManager {
         };
         executor.describe_table(table_name).await
     }
+
+    pub fn set_default_project(&self, session_id: Uuid, project: Option<String>) -> Result<()> {
+        let executor = {
+            let sessions = self.sessions.read();
+            let session = sessions
+                .get(&session_id)
+                .ok_or(Error::SessionNotFound(session_id))?;
+            Arc::clone(&session.executor)
+        };
+        executor.set_default_project(project)
+    }
+
+    pub fn get_default_project(&self, session_id: Uuid) -> Result<Option<String>> {
+        let executor = {
+            let sessions = self.sessions.read();
+            let session = sessions
+                .get(&session_id)
+                .ok_or(Error::SessionNotFound(session_id))?;
+            Arc::clone(&session.executor)
+        };
+        executor.get_default_project()
+    }
+
+    pub fn get_projects(&self, session_id: Uuid) -> Result<Vec<String>> {
+        let executor = {
+            let sessions = self.sessions.read();
+            let session = sessions
+                .get(&session_id)
+                .ok_or(Error::SessionNotFound(session_id))?;
+            Arc::clone(&session.executor)
+        };
+        executor.get_projects()
+    }
+
+    pub fn get_datasets(&self, session_id: Uuid, project: &str) -> Result<Vec<String>> {
+        let executor = {
+            let sessions = self.sessions.read();
+            let session = sessions
+                .get(&session_id)
+                .ok_or(Error::SessionNotFound(session_id))?;
+            Arc::clone(&session.executor)
+        };
+        executor.get_datasets(project)
+    }
+
+    pub fn get_tables_in_dataset(
+        &self,
+        session_id: Uuid,
+        project: &str,
+        dataset: &str,
+    ) -> Result<Vec<String>> {
+        let executor = {
+            let sessions = self.sessions.read();
+            let session = sessions
+                .get(&session_id)
+                .ok_or(Error::SessionNotFound(session_id))?;
+            Arc::clone(&session.executor)
+        };
+        executor.get_tables_in_dataset(project, dataset)
+    }
 }
 
 impl Default for SessionManager {
