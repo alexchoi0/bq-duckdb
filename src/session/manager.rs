@@ -1266,4 +1266,192 @@ mod tests {
             assert_eq!(result.rows[0][0].as_i64().unwrap(), 1 + i as i64);
         }
     }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_parallel_table_registration_in_session() {
+        let manager = Arc::new(SessionManager::new());
+        let session_id = manager.create_session().await.unwrap();
+
+        let num_tables = 20;
+        let mut handles = Vec::new();
+
+        for i in 0..num_tables {
+            let manager = Arc::clone(&manager);
+            let handle = tokio::spawn(async move {
+                let table_name = format!("parallel_table_{}", i);
+                let create_sql = format!(
+                    "CREATE TABLE {} (id INT64, value STRING, num FLOAT64)",
+                    table_name
+                );
+                manager
+                    .execute_statement(session_id, &create_sql)
+                    .await
+                    .unwrap();
+
+                let insert_sql = format!(
+                    "INSERT INTO {} VALUES ({}, 'value_{}', {}.5)",
+                    table_name, i, i, i
+                );
+                manager
+                    .execute_statement(session_id, &insert_sql)
+                    .await
+                    .unwrap();
+
+                table_name
+            });
+            handles.push(handle);
+        }
+
+        let mut created_tables = Vec::new();
+        for handle in handles {
+            let table_name = handle.await.unwrap();
+            created_tables.push(table_name);
+        }
+
+        assert_eq!(created_tables.len(), num_tables);
+
+        for i in 0..num_tables {
+            let table_name = format!("parallel_table_{}", i);
+            let select_sql = format!("SELECT * FROM {}", table_name);
+            let result = manager.execute_query(session_id, &select_sql).await.unwrap();
+            assert_eq!(result.rows.len(), 1);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_parallel_table_registration_with_qualified_names() {
+        let manager = Arc::new(SessionManager::new());
+        let session_id = manager.create_session().await.unwrap();
+
+        let projects = vec!["proj1", "proj2", "proj3"];
+        let datasets = vec!["ds1", "ds2"];
+        let tables_per_dataset = 5;
+
+        let mut handles = Vec::new();
+
+        for project in &projects {
+            for dataset in &datasets {
+                for i in 0..tables_per_dataset {
+                    let manager = Arc::clone(&manager);
+                    let project = project.to_string();
+                    let dataset = dataset.to_string();
+                    let handle = tokio::spawn(async move {
+                        let table_name = format!("{}.{}.table_{}", project, dataset, i);
+                        let create_sql = format!(
+                            "CREATE TABLE {} (id INT64, data STRING)",
+                            table_name
+                        );
+                        manager
+                            .execute_statement(session_id, &create_sql)
+                            .await
+                            .unwrap();
+
+                        let insert_sql = format!(
+                            "INSERT INTO {} VALUES ({}, '{}_data')",
+                            table_name, i, table_name
+                        );
+                        manager
+                            .execute_statement(session_id, &insert_sql)
+                            .await
+                            .unwrap();
+
+                        (project, dataset, format!("table_{}", i))
+                    });
+                    handles.push(handle);
+                }
+            }
+        }
+
+        for handle in handles {
+            handle.await.unwrap();
+        }
+
+        let catalog_projects = manager.get_projects(session_id).unwrap();
+        assert_eq!(catalog_projects.len(), 3);
+        assert!(catalog_projects.contains(&"PROJ1".to_string()));
+        assert!(catalog_projects.contains(&"PROJ2".to_string()));
+        assert!(catalog_projects.contains(&"PROJ3".to_string()));
+
+        for project in &projects {
+            let catalog_datasets = manager.get_datasets(session_id, project).unwrap();
+            assert_eq!(catalog_datasets.len(), 2);
+
+            for dataset in &datasets {
+                let tables = manager
+                    .get_tables_in_dataset(session_id, project, dataset)
+                    .unwrap();
+                assert_eq!(tables.len(), tables_per_dataset);
+            }
+        }
+
+        let result = manager
+            .execute_query(session_id, "SELECT * FROM proj1.ds1.table_0")
+            .await
+            .unwrap();
+        assert_eq!(result.rows.len(), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_parallel_source_table_loading() {
+        let manager = Arc::new(SessionManager::new());
+        let session_id = manager.create_session().await.unwrap();
+
+        let source_tables = vec![
+            ("proj.raw.users", "id INT64, name STRING, age INT64"),
+            ("proj.raw.orders", "id INT64, user_id INT64, amount FLOAT64"),
+            ("proj.raw.products", "id INT64, name STRING, price FLOAT64"),
+            ("proj.raw.categories", "id INT64, name STRING"),
+        ];
+
+        let mut handles = Vec::new();
+        for (table_name, schema) in &source_tables {
+            let manager = Arc::clone(&manager);
+            let table_name = table_name.to_string();
+            let schema = schema.to_string();
+            let handle = tokio::spawn(async move {
+                let create_sql = format!("CREATE TABLE {} ({})", table_name, schema);
+                manager
+                    .execute_statement(session_id, &create_sql)
+                    .await
+                    .unwrap();
+
+                let insert_sql = match table_name.as_str() {
+                    "proj.raw.users" => "INSERT INTO proj.raw.users VALUES (1, 'Alice', 30), (2, 'Bob', 25), (3, 'Charlie', 35)".to_string(),
+                    "proj.raw.orders" => "INSERT INTO proj.raw.orders VALUES (1, 1, 100.0), (2, 1, 200.0), (3, 2, 150.0), (4, 3, 300.0)".to_string(),
+                    "proj.raw.products" => "INSERT INTO proj.raw.products VALUES (1, 'Laptop', 999.99), (2, 'Mouse', 29.99), (3, 'Keyboard', 79.99)".to_string(),
+                    "proj.raw.categories" => "INSERT INTO proj.raw.categories VALUES (1, 'Electronics'), (2, 'Accessories')".to_string(),
+                    _ => panic!("Unknown table"),
+                };
+                manager
+                    .execute_statement(session_id, &insert_sql)
+                    .await
+                    .unwrap();
+
+                table_name
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.await.unwrap();
+        }
+
+        let tables = manager
+            .get_tables_in_dataset(session_id, "proj", "raw")
+            .unwrap();
+        assert_eq!(tables.len(), 4);
+
+        let result = manager
+            .execute_query(
+                session_id,
+                "SELECT u.name, SUM(o.amount) as total
+                 FROM proj.raw.users u
+                 JOIN proj.raw.orders o ON u.id = o.user_id
+                 GROUP BY u.name
+                 ORDER BY total DESC",
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.rows.len(), 3);
+    }
 }
