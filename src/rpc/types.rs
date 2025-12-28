@@ -420,3 +420,70 @@ pub struct GetTablesInDatasetParams {
 pub struct GetTablesInDatasetResult {
     pub tables: Vec<String>,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct LoadSqlDirectoryParams {
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    #[serde(rename = "rootPath")]
+    pub root_path: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LoadSqlDirectoryResult {
+    pub success: bool,
+    #[serde(rename = "tablesLoaded")]
+    pub tables_loaded: Vec<SqlTableInfo>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SqlTableInfo {
+    pub project: String,
+    pub dataset: String,
+    pub table: String,
+    pub path: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LoadParquetDirectoryParams {
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    #[serde(rename = "rootPath")]
+    pub root_path: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LoadParquetDirectoryResult {
+    pub success: bool,
+    #[serde(rename = "tablesLoaded")]
+    pub tables_loaded: Vec<ParquetTableInfo>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ParquetTableInfo {
+    pub project: String,
+    pub dataset: String,
+    pub table: String,
+    pub path: String,
+    #[serde(rename = "rowCount")]
+    pub row_count: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LoadDagFromDirectoryParams {
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    #[serde(rename = "rootPath")]
+    pub root_path: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LoadDagFromDirectoryResult {
+    pub success: bool,
+    #[serde(rename = "sourceTables")]
+    pub source_tables: Vec<ParquetTableInfo>,
+    #[serde(rename = "computedTables")]
+    pub computed_tables: Vec<SqlTableInfo>,
+    #[serde(rename = "dagInfo")]
+    pub dag_info: Vec<DagTableInfo>,
+}

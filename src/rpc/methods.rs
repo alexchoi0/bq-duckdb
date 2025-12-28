@@ -13,9 +13,11 @@ use super::types::{
     DestroySessionResult, GetDagParams, GetDagResult, GetDatasetsParams, GetDatasetsResult,
     GetDefaultProjectParams, GetDefaultProjectResult, GetProjectsParams, GetProjectsResult,
     GetTablesInDatasetParams, GetTablesInDatasetResult, InsertParams, InsertResult,
-    ListTablesParams, ListTablesResult, LoadParquetParams, LoadParquetResult, PingResult,
-    QueryParams, RegisterDagParams, RegisterDagResult, RetryDagParams, RunDagParams, RunDagResult,
-    SetDefaultProjectParams, SetDefaultProjectResult, TableErrorInfo, TableInfo,
+    ListTablesParams, ListTablesResult, LoadDagFromDirectoryParams, LoadDagFromDirectoryResult,
+    LoadParquetDirectoryParams, LoadParquetDirectoryResult, LoadParquetParams, LoadParquetResult,
+    LoadSqlDirectoryParams, LoadSqlDirectoryResult, PingResult, QueryParams, RegisterDagParams,
+    RegisterDagResult, RetryDagParams, RunDagParams, RunDagResult, SetDefaultProjectParams,
+    SetDefaultProjectResult, TableErrorInfo, TableInfo,
 };
 
 pub struct RpcMethods {
@@ -48,6 +50,9 @@ impl RpcMethods {
             "bq.getProjects" => self.get_projects(params).await,
             "bq.getDatasets" => self.get_datasets(params).await,
             "bq.getTablesInDataset" => self.get_tables_in_dataset(params).await,
+            "bq.loadSqlDirectory" => self.load_sql_directory(params).await,
+            "bq.loadParquetDirectory" => self.load_parquet_directory(params).await,
+            "bq.loadDagFromDirectory" => self.load_dag_from_directory(params).await,
             _ => Err(Error::InvalidRequest(format!("Unknown method: {}", method))),
         }
     }
@@ -321,6 +326,52 @@ impl RpcMethods {
             .get_tables_in_dataset(session_id, &p.project, &p.dataset)?;
 
         Ok(json!(GetTablesInDatasetResult { tables }))
+    }
+
+    async fn load_sql_directory(&self, params: Value) -> Result<Value> {
+        let p: LoadSqlDirectoryParams = serde_json::from_value(params)?;
+        let session_id = parse_uuid(&p.session_id)?;
+
+        let (_, table_infos) = self
+            .session_manager
+            .load_sql_directory(session_id, &p.root_path)?;
+
+        Ok(json!(LoadSqlDirectoryResult {
+            success: true,
+            tables_loaded: table_infos,
+        }))
+    }
+
+    async fn load_parquet_directory(&self, params: Value) -> Result<Value> {
+        let p: LoadParquetDirectoryParams = serde_json::from_value(params)?;
+        let session_id = parse_uuid(&p.session_id)?;
+
+        let table_infos = self
+            .session_manager
+            .load_parquet_directory(session_id, &p.root_path)
+            .await?;
+
+        Ok(json!(LoadParquetDirectoryResult {
+            success: true,
+            tables_loaded: table_infos,
+        }))
+    }
+
+    async fn load_dag_from_directory(&self, params: Value) -> Result<Value> {
+        let p: LoadDagFromDirectoryParams = serde_json::from_value(params)?;
+        let session_id = parse_uuid(&p.session_id)?;
+
+        let (source_tables, computed_tables, dag_info) = self
+            .session_manager
+            .load_dag_from_directory(session_id, &p.root_path)
+            .await?;
+
+        Ok(json!(LoadDagFromDirectoryResult {
+            success: true,
+            source_tables,
+            computed_tables,
+            dag_info,
+        }))
     }
 }
 
