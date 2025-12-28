@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::Arc;
 
 use parking_lot::RwLock;
@@ -8,9 +7,10 @@ use uuid::Uuid;
 use crate::error::{Error, Result};
 use crate::executor::{BigQueryExecutor, Executor, ExecutorMode, QueryResult, YachtSqlExecutor};
 use crate::rpc::types::{
-    ColumnDef, DagTableDef, DagTableDetail, DagTableInfo, ParquetTableInfo, SqlTableInfo,
+    DagTableDef, DagTableDetail, DagTableInfo, ParquetTableInfo, SqlTableInfo,
 };
 
+use super::loader;
 use super::pipeline::{Pipeline, PipelineResult, TableError};
 
 pub struct SessionManager {
@@ -284,76 +284,27 @@ impl SessionManager {
         session_id: Uuid,
         root_path: &str,
     ) -> Result<(Vec<DagTableInfo>, Vec<SqlTableInfo>)> {
-        let root = Path::new(root_path);
-        if !root.is_dir() {
-            return Err(Error::Executor(format!(
-                "Root path is not a directory: {}",
-                root_path
-            )));
-        }
+        let sql_files = loader::discover_sql_files(root_path)?;
 
-        let mut tables = Vec::new();
-        let mut table_infos = Vec::new();
+        let tables: Vec<DagTableDef> = sql_files
+            .iter()
+            .map(|sf| DagTableDef {
+                name: sf.full_table_name(),
+                sql: Some(sf.sql.clone()),
+                schema: None,
+                rows: vec![],
+            })
+            .collect();
 
-        for project_entry in std::fs::read_dir(root)
-            .map_err(|e| Error::Executor(format!("Failed to read directory: {}", e)))?
-        {
-            let project_entry = project_entry
-                .map_err(|e| Error::Executor(format!("Failed to read entry: {}", e)))?;
-            let project_path = project_entry.path();
-            if !project_path.is_dir() {
-                continue;
-            }
-            let project_name = project_entry.file_name().to_string_lossy().to_string();
-
-            for dataset_entry in std::fs::read_dir(&project_path)
-                .map_err(|e| Error::Executor(format!("Failed to read directory: {}", e)))?
-            {
-                let dataset_entry = dataset_entry
-                    .map_err(|e| Error::Executor(format!("Failed to read entry: {}", e)))?;
-                let dataset_path = dataset_entry.path();
-                if !dataset_path.is_dir() {
-                    continue;
-                }
-                let dataset_name = dataset_entry.file_name().to_string_lossy().to_string();
-
-                for table_entry in std::fs::read_dir(&dataset_path)
-                    .map_err(|e| Error::Executor(format!("Failed to read directory: {}", e)))?
-                {
-                    let table_entry = table_entry
-                        .map_err(|e| Error::Executor(format!("Failed to read entry: {}", e)))?;
-                    let table_path = table_entry.path();
-                    if !table_path.is_file() {
-                        continue;
-                    }
-                    let file_name = table_entry.file_name().to_string_lossy().to_string();
-                    if !file_name.ends_with(".sql") {
-                        continue;
-                    }
-                    let table_name = file_name.trim_end_matches(".sql").to_string();
-
-                    let sql = std::fs::read_to_string(&table_path)
-                        .map_err(|e| Error::Executor(format!("Failed to read file: {}", e)))?;
-
-                    let full_table_name =
-                        format!("{}.{}.{}", project_name, dataset_name, table_name);
-
-                    tables.push(DagTableDef {
-                        name: full_table_name,
-                        sql: Some(sql),
-                        schema: None,
-                        rows: vec![],
-                    });
-
-                    table_infos.push(SqlTableInfo {
-                        project: project_name.clone(),
-                        dataset: dataset_name.clone(),
-                        table: table_name,
-                        path: table_path.to_string_lossy().to_string(),
-                    });
-                }
-            }
-        }
+        let table_infos: Vec<SqlTableInfo> = sql_files
+            .into_iter()
+            .map(|sf| SqlTableInfo {
+                project: sf.project,
+                dataset: sf.dataset,
+                table: sf.table,
+                path: sf.path,
+            })
+            .collect();
 
         let dag_infos = self.register_dag(session_id, tables)?;
 
@@ -365,13 +316,7 @@ impl SessionManager {
         session_id: Uuid,
         root_path: &str,
     ) -> Result<Vec<ParquetTableInfo>> {
-        let root = Path::new(root_path);
-        if !root.is_dir() {
-            return Err(Error::Executor(format!(
-                "Root path is not a directory: {}",
-                root_path
-            )));
-        }
+        let parquet_files = loader::discover_parquet_files(root_path)?;
 
         let executor = {
             let sessions = self.sessions.read();
@@ -381,97 +326,28 @@ impl SessionManager {
             Arc::clone(&session.executor)
         };
 
-        struct ParquetFile {
-            project: String,
-            dataset: String,
-            table: String,
-            parquet_path: String,
-            schema: Vec<ColumnDef>,
-        }
+        self.load_parquet_files_parallel(executor, parquet_files)
+            .await
+    }
 
-        let mut parquet_files = Vec::new();
-
-        for project_entry in std::fs::read_dir(root)
-            .map_err(|e| Error::Executor(format!("Failed to read directory: {}", e)))?
-        {
-            let project_entry = project_entry
-                .map_err(|e| Error::Executor(format!("Failed to read entry: {}", e)))?;
-            let project_path = project_entry.path();
-            if !project_path.is_dir() {
-                continue;
-            }
-            let project_name = project_entry.file_name().to_string_lossy().to_string();
-
-            for dataset_entry in std::fs::read_dir(&project_path)
-                .map_err(|e| Error::Executor(format!("Failed to read directory: {}", e)))?
-            {
-                let dataset_entry = dataset_entry
-                    .map_err(|e| Error::Executor(format!("Failed to read entry: {}", e)))?;
-                let dataset_path = dataset_entry.path();
-                if !dataset_path.is_dir() {
-                    continue;
-                }
-                let dataset_name = dataset_entry.file_name().to_string_lossy().to_string();
-
-                for table_entry in std::fs::read_dir(&dataset_path)
-                    .map_err(|e| Error::Executor(format!("Failed to read directory: {}", e)))?
-                {
-                    let table_entry = table_entry
-                        .map_err(|e| Error::Executor(format!("Failed to read entry: {}", e)))?;
-                    let table_path = table_entry.path();
-                    if !table_path.is_file() {
-                        continue;
-                    }
-                    let file_name = table_entry.file_name().to_string_lossy().to_string();
-                    if !file_name.ends_with(".parquet") {
-                        continue;
-                    }
-                    let table_name = file_name.trim_end_matches(".parquet").to_string();
-
-                    let schema_path = dataset_path.join(format!("{}.schema.json", table_name));
-                    if !schema_path.exists() {
-                        return Err(Error::Executor(format!(
-                            "Schema file not found: {}",
-                            schema_path.display()
-                        )));
-                    }
-
-                    let schema_content = std::fs::read_to_string(&schema_path).map_err(|e| {
-                        Error::Executor(format!("Failed to read schema file: {}", e))
-                    })?;
-                    let schema: Vec<ColumnDef> = serde_json::from_str(&schema_content)
-                        .map_err(|e| Error::Executor(format!("Failed to parse schema: {}", e)))?;
-
-                    parquet_files.push(ParquetFile {
-                        project: project_name.clone(),
-                        dataset: dataset_name.clone(),
-                        table: table_name,
-                        parquet_path: table_path.to_string_lossy().to_string(),
-                        schema,
-                    });
-                }
-            }
-        }
-
+    async fn load_parquet_files_parallel(
+        &self,
+        executor: Arc<Executor>,
+        parquet_files: Vec<loader::ParquetFile>,
+    ) -> Result<Vec<ParquetTableInfo>> {
         let mut handles = Vec::new();
+
         for pf in parquet_files {
             let executor = Arc::clone(&executor);
-            let full_table_name = format!("{}.{}.{}", pf.project, pf.dataset, pf.table);
-            let parquet_path = pf.parquet_path.clone();
-            let schema = pf.schema.clone();
-            let project = pf.project.clone();
-            let dataset = pf.dataset.clone();
-            let table = pf.table.clone();
-
             let handle = tokio::spawn(async move {
                 let row_count = executor
-                    .load_parquet(&full_table_name, &parquet_path, &schema)
+                    .load_parquet(&pf.full_table_name(), &pf.path, &pf.schema)
                     .await?;
                 Ok::<_, Error>(ParquetTableInfo {
-                    project,
-                    dataset,
-                    table,
-                    path: parquet_path,
+                    project: pf.project,
+                    dataset: pf.dataset,
+                    table: pf.table,
+                    path: pf.path,
                     row_count,
                 })
             });
@@ -494,13 +370,7 @@ impl SessionManager {
         session_id: Uuid,
         root_path: &str,
     ) -> Result<(Vec<ParquetTableInfo>, Vec<SqlTableInfo>, Vec<DagTableInfo>)> {
-        let root = Path::new(root_path);
-        if !root.is_dir() {
-            return Err(Error::Executor(format!(
-                "Root path is not a directory: {}",
-                root_path
-            )));
-        }
+        let discovered = loader::discover_files(root_path)?;
 
         let executor = {
             let sessions = self.sessions.read();
@@ -510,156 +380,31 @@ impl SessionManager {
             Arc::clone(&session.executor)
         };
 
-        struct ParquetFile {
-            project: String,
-            dataset: String,
-            table: String,
-            parquet_path: String,
-            schema: Vec<ColumnDef>,
-        }
+        let parquet_results = self
+            .load_parquet_files_parallel(executor, discovered.parquet_files)
+            .await?;
 
-        struct SqlFile {
-            project: String,
-            dataset: String,
-            table: String,
-            sql_path: String,
-            sql: String,
-        }
-
-        let mut parquet_files = Vec::new();
-        let mut sql_files = Vec::new();
-
-        for project_entry in std::fs::read_dir(root)
-            .map_err(|e| Error::Executor(format!("Failed to read directory: {}", e)))?
-        {
-            let project_entry = project_entry
-                .map_err(|e| Error::Executor(format!("Failed to read entry: {}", e)))?;
-            let project_path = project_entry.path();
-            if !project_path.is_dir() {
-                continue;
-            }
-            let project_name = project_entry.file_name().to_string_lossy().to_string();
-
-            for dataset_entry in std::fs::read_dir(&project_path)
-                .map_err(|e| Error::Executor(format!("Failed to read directory: {}", e)))?
-            {
-                let dataset_entry = dataset_entry
-                    .map_err(|e| Error::Executor(format!("Failed to read entry: {}", e)))?;
-                let dataset_path = dataset_entry.path();
-                if !dataset_path.is_dir() {
-                    continue;
-                }
-                let dataset_name = dataset_entry.file_name().to_string_lossy().to_string();
-
-                for table_entry in std::fs::read_dir(&dataset_path)
-                    .map_err(|e| Error::Executor(format!("Failed to read directory: {}", e)))?
-                {
-                    let table_entry = table_entry
-                        .map_err(|e| Error::Executor(format!("Failed to read entry: {}", e)))?;
-                    let table_path = table_entry.path();
-                    if !table_path.is_file() {
-                        continue;
-                    }
-                    let file_name = table_entry.file_name().to_string_lossy().to_string();
-
-                    if file_name.ends_with(".parquet") {
-                        let table_name = file_name.trim_end_matches(".parquet").to_string();
-
-                        let schema_path = dataset_path.join(format!("{}.schema.json", table_name));
-                        if !schema_path.exists() {
-                            return Err(Error::Executor(format!(
-                                "Schema file not found: {}",
-                                schema_path.display()
-                            )));
-                        }
-
-                        let schema_content =
-                            std::fs::read_to_string(&schema_path).map_err(|e| {
-                                Error::Executor(format!("Failed to read schema file: {}", e))
-                            })?;
-                        let schema: Vec<ColumnDef> = serde_json::from_str(&schema_content)
-                            .map_err(|e| {
-                                Error::Executor(format!("Failed to parse schema: {}", e))
-                            })?;
-
-                        parquet_files.push(ParquetFile {
-                            project: project_name.clone(),
-                            dataset: dataset_name.clone(),
-                            table: table_name,
-                            parquet_path: table_path.to_string_lossy().to_string(),
-                            schema,
-                        });
-                    } else if file_name.ends_with(".sql") {
-                        let table_name = file_name.trim_end_matches(".sql").to_string();
-
-                        let sql = std::fs::read_to_string(&table_path)
-                            .map_err(|e| Error::Executor(format!("Failed to read file: {}", e)))?;
-
-                        sql_files.push(SqlFile {
-                            project: project_name.clone(),
-                            dataset: dataset_name.clone(),
-                            table: table_name,
-                            sql_path: table_path.to_string_lossy().to_string(),
-                            sql,
-                        });
-                    }
-                }
-            }
-        }
-
-        let mut parquet_handles = Vec::new();
-        for pf in parquet_files {
-            let executor = Arc::clone(&executor);
-            let full_table_name = format!("{}.{}.{}", pf.project, pf.dataset, pf.table);
-            let parquet_path = pf.parquet_path.clone();
-            let schema = pf.schema.clone();
-            let project = pf.project.clone();
-            let dataset = pf.dataset.clone();
-            let table = pf.table.clone();
-
-            let handle = tokio::spawn(async move {
-                let row_count = executor
-                    .load_parquet(&full_table_name, &parquet_path, &schema)
-                    .await?;
-                Ok::<_, Error>(ParquetTableInfo {
-                    project,
-                    dataset,
-                    table,
-                    path: parquet_path,
-                    row_count,
-                })
-            });
-            parquet_handles.push(handle);
-        }
-
-        let mut parquet_results = Vec::new();
-        for handle in parquet_handles {
-            let result = handle
-                .await
-                .map_err(|e| Error::Executor(format!("Task join error: {}", e)))??;
-            parquet_results.push(result);
-        }
-
-        let mut dag_tables = Vec::new();
-        let mut sql_table_infos = Vec::new();
-
-        for sf in sql_files {
-            let full_table_name = format!("{}.{}.{}", sf.project, sf.dataset, sf.table);
-
-            dag_tables.push(DagTableDef {
-                name: full_table_name,
-                sql: Some(sf.sql),
+        let dag_tables: Vec<DagTableDef> = discovered
+            .sql_files
+            .iter()
+            .map(|sf| DagTableDef {
+                name: sf.full_table_name(),
+                sql: Some(sf.sql.clone()),
                 schema: None,
                 rows: vec![],
-            });
+            })
+            .collect();
 
-            sql_table_infos.push(SqlTableInfo {
+        let sql_table_infos: Vec<SqlTableInfo> = discovered
+            .sql_files
+            .into_iter()
+            .map(|sf| SqlTableInfo {
                 project: sf.project,
                 dataset: sf.dataset,
                 table: sf.table,
-                path: sf.sql_path,
-            });
-        }
+                path: sf.path,
+            })
+            .collect();
 
         let dag_infos = self.register_dag(session_id, dag_tables)?;
 
@@ -1313,7 +1058,10 @@ mod tests {
         for i in 0..num_tables {
             let table_name = format!("parallel_table_{}", i);
             let select_sql = format!("SELECT * FROM {}", table_name);
-            let result = manager.execute_query(session_id, &select_sql).await.unwrap();
+            let result = manager
+                .execute_query(session_id, &select_sql)
+                .await
+                .unwrap();
             assert_eq!(result.rows.len(), 1);
         }
     }
@@ -1337,10 +1085,8 @@ mod tests {
                     let dataset = dataset.to_string();
                     let handle = tokio::spawn(async move {
                         let table_name = format!("{}.{}.table_{}", project, dataset, i);
-                        let create_sql = format!(
-                            "CREATE TABLE {} (id INT64, data STRING)",
-                            table_name
-                        );
+                        let create_sql =
+                            format!("CREATE TABLE {} (id INT64, data STRING)", table_name);
                         manager
                             .execute_statement(session_id, &create_sql)
                             .await
